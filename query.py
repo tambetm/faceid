@@ -24,9 +24,9 @@ def get_similar_faces(face_id, limit=5, similarity_threshold=0.35):
     FROM similarities s 
     JOIN faces f ON s.face2_id = f.face_id 
     JOIN images i ON f.image_id = i.image_id 
-    WHERE s.distance < ? 
+    WHERE s.face1_id = ? AND s.distance < ? 
     ORDER BY s.distance
-    LIMIT ?""", (similarity_threshold, limit,))
+    LIMIT ?""", (face_id, similarity_threshold, limit,))
     return c.fetchall()
 
 def get_my_face():
@@ -45,7 +45,7 @@ def get_selfies(limit=5, similarity_threshold=0.35):
     FROM similarities s 
     JOIN faces f ON s.face2_id = f.face_id 
     JOIN images i ON f.image_id = i.image_id 
-    WHERE s.face1_id = ? and s.distance < ? 
+    WHERE s.face1_id = ? AND s.distance < ? 
         AND i.type IN ('image', 'video')
     ORDER BY s.distance
     LIMIT ?""", (me[0], similarity_threshold, limit,))
@@ -76,7 +76,7 @@ def get_criminals(face_id, limit=5, similarity_threshold=0.35):
     JOIN images i ON f.image_id = i.image_id 
     WHERE s.face1_id = ? 
         AND s.distance < ?
-        AND i.type = 'google'
+        AND i.type = 'crime'
     ORDER BY s.distance
     LIMIT ?""", (face_id, similarity_threshold, limit,))
     return c.fetchall()
