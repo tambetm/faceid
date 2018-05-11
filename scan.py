@@ -1,3 +1,4 @@
+from __future__ import print_function
 import dlib
 import cv2
 import magic
