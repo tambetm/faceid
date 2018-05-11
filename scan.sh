@@ -1,6 +1,6 @@
 #!/bin/bash
 
-imgdir=$1
+imgdir=`realpath $1`
 dbpath=`realpath $2`
 dbdir=`dirname $dbpath`
 dbfile=`basename $dbpath`
