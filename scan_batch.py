@@ -55,7 +55,7 @@ def create_tables():
 def insert_image(row):
     c = conn.cursor()
     c.execute("""INSERT INTO images 
-    (type, filepath, image_width, image_height, resized_filepath, resized_width, resized_height, frame_num, num_faces, exif_data) 
+    (type, filepath, image_width, image_height, resized_filepath, resized_width, resized_height, frame_num, exif_data, num_faces) 
     VALUES (?,?,?,?,?,?,?,?,?,?)""", row)
     return c.lastrowid
 
@@ -100,6 +100,10 @@ def get_image_type(image_type):
     else:
         return args.type
 
+images_queue = []
+grays_queue = []
+data_queue = []
+
 def process_image(filepath, img, image_type, frame_num=None, exif_data=None):
     image_height, image_width, _ = img.shape
     resizepath, resized_height, resized_width = None, image_height, image_width
@@ -118,45 +122,73 @@ def process_image(filepath, img, image_type, frame_num=None, exif_data=None):
             cv2.imwrite(resizepath, img)
             resized_height, resized_width, _ = img.shape
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    faces = detector(gray, args.upscale)
 
-    image_id = insert_image([image_type, filepath, image_width, image_height, resizepath, resized_width, resized_height, frame_num, len(faces), exif_data])
+    global images_queue
+    global grays_queue
+    global data_queue
 
-    poses = dlib.full_object_detections()
-    rects = []
-    for rect in faces:
-        if args.detector == 'cnn':
-            rect = rect.rect
-        pose = predictor(gray, rect)
-        poses.append(pose)
-        rects.append(rect)
+    # if image has different resolution, then process queue
+    if len(data_queue) > 0 and (data_queue[0][5] != resized_width or data_queue[0][6] != resized_height):
+        process_queue()
 
-    # do batched computation of face descriptors
-    img_rgb = img[...,::-1] # BGR to RGB
-    descriptors = facerec.compute_face_descriptor(img_rgb, poses, args.jitter)
+    images_queue.append(img)
+    grays_queue.append(gray)
+    data_queue.append([image_type, filepath, image_width, image_height, resizepath, resized_width, resized_height, frame_num, exif_data])
 
-    for i, (rect, pose, descriptor) in enumerate(zip(rects, poses, descriptors)):
-        face_left = float(rect.left()) / resized_width
-        face_top = float(rect.top()) / resized_height
-        face_right = float(rect.right()) / resized_width
-        face_bottom = float(rect.bottom()) / resized_height
-        face_width = face_right - face_left
-        face_height = face_bottom - face_top
-        landmarks = [[float(p.x) / resized_width, float(p.y) / resized_height] for p in pose.parts()]
-        descriptor = list(descriptor)
-        
-        face_id = insert_face([image_id, i, face_left, face_top, face_right, face_bottom, face_width, face_height, json.dumps(landmarks), json.dumps(descriptor)])
+    # if batch full then process queue
+    if len(images_queue) == args.batch_size:
+        process_queue()
 
-        if args.save_resized:
-            facepath = os.path.join(args.save_resized, "face_%02d.jpg" % face_id)
-            cv2.imwrite(facepath, img[rect.top():rect.bottom(),rect.left():rect.right()])
+def process_queue():
+    global images_queue
+    global grays_queue
+    global data_queue
+    global num_images
+    global num_faces
+
+    faces_queue = detector(grays_queue, args.upscale, batch_size=len(grays_queue))
+
+    for faces, img, gray, data in zip(faces_queue, images_queue, grays_queue, data_queue):
+        image_id = insert_image(data + [len(faces)])
+
+        poses = dlib.full_object_detections()
+        rects = []
+        for face in faces:
+            pose = predictor(gray, face.rect)
+            poses.append(pose)
+            rects.append(face.rect)
+
+        # do batched computation of face descriptors
+        img_rgb = img[...,::-1] # BGR to RGB
+        descriptors = facerec.compute_face_descriptor(img_rgb, poses, args.jitter)
+
+        resized_width = data[5]
+        resized_height = data[6]
+        for i, (rect, pose, descriptor) in enumerate(zip(rects, poses, descriptors)):
+            face_left = float(rect.left()) / resized_width
+            face_top = float(rect.top()) / resized_height
+            face_right = float(rect.right()) / resized_width
+            face_bottom = float(rect.bottom()) / resized_height
+            face_width = face_right - face_left
+            face_height = face_bottom - face_top
+            landmarks = [[float(p.x) / resized_width, float(p.y) / resized_height] for p in pose.parts()]
+            descriptor = list(descriptor)
+            
+            face_id = insert_face([image_id, i, face_left, face_top, face_right, face_bottom, face_width, face_height, json.dumps(landmarks), json.dumps(descriptor)])
+
+            if args.save_resized:
+                facepath = os.path.join(args.save_resized, "face_%02d.jpg" % face_id)
+                cv2.imwrite(facepath, img[rect.top():rect.bottom(),rect.left():rect.right()])
+
+        num_images += 1
+        num_faces += len(faces)
 
     conn.commit()
 
-    global num_images
-    global num_faces
-    num_images += 1
-    num_faces += len(faces)
+    images_queue.clear()    
+    grays_queue.clear()    
+    data_queue.clear()    
+
     elapsed = time.time() - start_time
     print("\rFiles: %d, Images: %d, Faces: %d, Elapsed: %.2fs, Average per image: %.3fs" % (num_files, num_images, num_faces, elapsed, elapsed / num_images), end='')
 
@@ -243,9 +275,9 @@ def compute_similarities():
 parser = argparse.ArgumentParser()
 parser.add_argument("dir")
 parser.add_argument("db")
-parser.add_argument("--detector", choices=['hog', 'cnn'], default='hog')
 parser.add_argument("--upscale", type=int, default=0)
 parser.add_argument("--jitter", type=int, default=0)
+parser.add_argument("--batch_size", type=int, default=10)
 parser.add_argument("--predictor_path", default='shape_predictor_68_face_landmarks.dat')
 parser.add_argument("--face_rec_model_path", default='dlib_face_recognition_resnet_model_v1.dat')
 parser.add_argument("--cnn_model_path", default='mmod_human_face_detector.dat')
@@ -256,12 +288,7 @@ parser.add_argument("--video_max_images", type=int, default=10)
 parser.add_argument("--type", choices=['default', 'photobooth', 'google', 'crime'], default='default')
 args = parser.parse_args()
 
-if args.detector == 'hog':
-    detector = dlib.get_frontal_face_detector()
-elif args.detector == 'cnn':
-    detector = dlib.cnn_face_detection_model_v1(args.cnn_model_path)
-else:
-    assert False, "Unknown detector " + args.detector
+detector = dlib.cnn_face_detection_model_v1(args.cnn_model_path)
 predictor = dlib.shape_predictor(args.predictor_path)
 facerec = dlib.face_recognition_model_v1(args.face_rec_model_path)
 
@@ -289,6 +316,8 @@ for dirpath, dirnames, filenames in os.walk(args.dir):
         elif mime_type.startswith('video/'):
             process_video_file(filepath)
         num_files += 1
+# process remaining images in the queue
+process_queue()
 print()
 
 print("Calculating similarities...")
