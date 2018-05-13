@@ -121,21 +121,28 @@ def process_image(filepath, img, image_type, frame_num=None, exif_data=None):
     faces = detector(gray, args.upscale)
 
     image_id = insert_image([image_type, filepath, image_width, image_height, resizepath, resized_width, resized_height, frame_num, len(faces), exif_data])
-    
-    img_rgb = img[...,::-1] # BGR to RGB
-    for i, rect in enumerate(faces):
+
+    poses = dlib.full_object_detections()
+    rects = []
+    for rect in faces:
         if args.detector == 'cnn':
             rect = rect.rect
-        landmarks = predictor(gray, rect)
-        descriptor = facerec.compute_face_descriptor(img_rgb, landmarks, args.jitter)
-        #print(rect)
+        pose = predictor(gray, rect)
+        poses.append(pose)
+        rects.append(rect)
+
+    # do batched computation of face descriptors
+    img_rgb = img[...,::-1] # BGR to RGB
+    descriptors = facerec.compute_face_descriptor(img_rgb, poses, args.jitter)
+
+    for i, (rect, pose, descriptor) in enumerate(zip(rects, poses, descriptors)):
         face_left = float(rect.left()) / resized_width
         face_top = float(rect.top()) / resized_height
         face_right = float(rect.right()) / resized_width
         face_bottom = float(rect.bottom()) / resized_height
         face_width = face_right - face_left
         face_height = face_bottom - face_top
-        landmarks = [[float(p.x) / resized_width, float(p.y) / resized_height] for p in landmarks.parts()]
+        landmarks = [[float(p.x) / resized_width, float(p.y) / resized_height] for p in pose.parts()]
         descriptor = list(descriptor)
         
         face_id = insert_face([image_id, i, face_left, face_top, face_right, face_bottom, face_width, face_height, json.dumps(landmarks), json.dumps(descriptor)])
