@@ -5,11 +5,17 @@ import magic
 import exifread
 import numpy as np
 import facedb as db
-import sqlite3
 import json
 import time
 import os
 import argparse
+
+def makedirs(dir):
+    try: 
+        os.makedirs(dir)
+    except OSError:
+        if not os.path.isdir(dir):
+            raise
 
 def resize_image(img, max_size):
     fx = float(max_size) / img.shape[1]
@@ -60,6 +66,7 @@ def process_image(filepath, img, image_type, frame_num=None, exif_data=None):
     img_rgb = img[...,::-1] # BGR to RGB
     descriptors = facerec.compute_face_descriptor(img_rgb, poses, args.jitter)
 
+    global new_descriptors
     for i, (rect, pose, descriptor) in enumerate(zip(rects, poses, descriptors)):
         face_left = float(rect.left()) / resized_width
         face_top = float(rect.top()) / resized_height
@@ -72,9 +79,12 @@ def process_image(filepath, img, image_type, frame_num=None, exif_data=None):
         
         face_id = db.insert_face([image_id, i, face_left, face_top, face_right, face_bottom, face_width, face_height, json.dumps(landmarks), json.dumps(descriptor)])
 
-        if args.save_resized:
-            facepath = os.path.join(args.save_resized, "face_%02d.jpg" % face_id)
+        if args.save_faces:
+            facepath = os.path.join(args.save_faces, "face_%02d.jpg" % face_id)
             cv2.imwrite(facepath, img[rect.top():rect.bottom(),rect.left():rect.right()])
+
+        if args.incremental_distances:
+            new_descriptors.append((face_id, descriptor))
 
     db.commit()
 
@@ -133,29 +143,44 @@ class Timer(object):
         return str(self.t())
 
 def compute_similarities():
-    t = Timer()
-    face_descriptors = db.get_all_descriptors()
-    #print("get_all_descriptors():", t)
-
-    print("Faces: %d" % len(face_descriptors), end='')
-    if len(face_descriptors) == 0:
+    global new_descriptors
+    if args.incremental_distances and len(new_descriptors) == 0:
         print()
         return
 
-    descriptors = np.array([json.loads(f[1]) for f in face_descriptors])
+    t = Timer()
+    all_descriptors = db.get_all_descriptors()
+    #print("get_all_descriptors():", t)
+    print("Faces: %d" % len(all_descriptors), end='')
+    if len(all_descriptors) < 2:
+        print()
+        return
+
+    X = np.array([json.loads(f[1]) for f in all_descriptors])
     #print("convert to array:", t)
-    sumsquares = np.sum(np.square(descriptors), axis=-1)
-    dists = np.sqrt(np.maximum(sumsquares[np.newaxis] + sumsquares[:, np.newaxis] - 2 * np.dot(descriptors, descriptors.T), 0))
+    X2 = np.sum(np.square(X), axis=-1)
+    if args.incremental_distances:
+        Y = np.array([f[1] for f in new_descriptors])
+        Y2 = np.sum(np.square(Y), axis=-1)
+    else:
+        new_descriptors = all_descriptors
+        Y = X
+        Y2 = X2
+    dists = np.sqrt(np.maximum(X2[:, np.newaxis] + Y2[np.newaxis] - 2 * np.dot(X, Y.T), 0))
     #print("calculate dists:", t)
-    db.delete_similarities()
+
+    if not args.incremental_distances:
+        db.delete_similarities()
     #print("delete similarities:", t)
-    idx = np.where(dists < args.similarity_threshold)
-    similarities = [(face_descriptors[i][0], face_descriptors[j][0], dists[i, j]) for i, j in zip(*idx) if i != j]
-    db.insert_similarities(similarities)
+    num_similarities = 0
+    for i, j in zip(*np.where(dists < args.similarity_threshold)):
+        if all_descriptors[i][0] != new_descriptors[j][0]:
+            db.insert_similarity([all_descriptors[i][0], new_descriptors[j][0], dists[i, j]])
+            num_similarities += 1
     #print("save similarities:", t)
     db.commit()
     #print("commit:", t)
-    print(", Similarities: %d, Time: %.2fs" % (len(similarities), t.total()))
+    print(", Similarities: %d, Time: %.2fs" % (num_similarities, t.total()))
 
 parser = argparse.ArgumentParser()
 parser.add_argument("dir")
@@ -168,7 +193,9 @@ parser.add_argument("--face_rec_model_path", default='dlib_face_recognition_resn
 parser.add_argument("--cnn_model_path", default='mmod_human_face_detector.dat')
 parser.add_argument("--resize", type=int, default=1024)
 parser.add_argument("--save_resized")
+parser.add_argument("--save_faces")
 parser.add_argument("--similarity_threshold", type=float, default=0.5)
+parser.add_argument("--incremental_distances", action='store_true')
 parser.add_argument("--video_max_images", type=int, default=10)
 parser.add_argument("--type", choices=['default', 'photobooth', 'google', 'crime'], default='default')
 args = parser.parse_args()
@@ -183,11 +210,10 @@ predictor = dlib.shape_predictor(args.predictor_path)
 facerec = dlib.face_recognition_model_v1(args.face_rec_model_path)
 
 if args.save_resized:
-    try: 
-        os.makedirs(args.save_resized)
-    except OSError:
-        if not os.path.isdir(args.save_resized):
-            raise
+    makedirs(args.save_resized)
+
+if args.save_faces:
+    makedirs(args.save_faces)
 
 db.connect(args.db)
 
@@ -196,6 +222,7 @@ start_time = time.time()
 num_files = 0
 num_images = 0
 num_faces = 0
+new_descriptors = []
 for dirpath, dirnames, filenames in os.walk(args.dir):
     for filename in filenames:
         filepath = os.path.join(dirpath, filename)        
