@@ -11,9 +11,9 @@ import time
 import os
 import argparse
 
-def resize_image(img, size):
-    fx = float(size) / img.shape[1]
-    fy = float(size) / img.shape[0]
+def resize_image(img, max_size):
+    fx = float(max_size) / img.shape[1]
+    fy = float(max_size) / img.shape[0]
     f = min(fx, fy, 1)
     return cv2.resize(img, (0, 0), fx=f, fy=f)
 
@@ -45,7 +45,7 @@ def process_image(filepath, img, image_type, frame_num=None, exif_data=None):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     faces = detector(gray, args.upscale)
 
-    image_id = db.insert_image([image_type, filepath, image_width, image_height, resizepath, resized_width, resized_height, frame_num, len(faces), exif_data])
+    image_id = db.insert_image([image_type, filepath, image_width, image_height, resizepath, resized_width, resized_height, frame_num, exif_data, len(faces)])
 
     poses = dlib.full_object_detections()
     rects = []
@@ -107,8 +107,7 @@ def process_video_file(filepath):
     while cap.isOpened() and used_images < args.video_max_images:
         #print("msec:", cap.get(cv2.CAP_PROP_POS_MSEC), "frame:", cap.get(cv2.CAP_PROP_POS_FRAMES), )
         # just grab the frame, do not decode
-        ret = cap.grab()
-        if not ret:
+        if not cap.grab():
             break
         # process one frame per second
         if frame_num % frame_interval == 0:

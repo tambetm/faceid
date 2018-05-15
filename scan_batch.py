@@ -5,14 +5,15 @@ import magic
 import exifread
 import numpy as np
 import facedb as db
+from sklearn.neighbors import NearestNeighbors
 import json
 import time
 import os
 import argparse
 
-def resize_image(img, size):
-    fx = float(size) / img.shape[1]
-    fy = float(size) / img.shape[0]
+def resize_image(img, max_size):
+    fx = float(max_size) / img.shape[1]
+    fy = float(max_size) / img.shape[0]
     f = min(fx, fy, 1)
     return cv2.resize(img, (0, 0), fx=f, fy=f)
 
@@ -137,8 +138,7 @@ def process_video_file(filepath):
     used_images = 0
     while cap.isOpened() and used_images < args.video_max_images:
         # just grab the frame, do not decode
-        ret = cap.grab()
-        if not ret:
+        if not cap.grab():
             break
         # process one frame after interval
         if frame_num % frame_interval == 0:
@@ -175,15 +175,18 @@ def compute_similarities():
 
     descriptors = np.array([json.loads(f[1]) for f in face_descriptors])
     #print("convert to array:", t)
-    sumsquares = np.sum(np.square(descriptors), axis=-1)
-    dists = np.sqrt(np.maximum(sumsquares[np.newaxis] + sumsquares[:, np.newaxis] - 2 * np.dot(descriptors, descriptors.T), 0))
+    nn = NearestNeighbors(radius=args.similarity_threshold)
+    #print("create nn:", t)
+    nn.fit(descriptors)
+    #print("fit nn:", t)
+    dists = nn.radius_neighbors_graph(descriptors, mode='distance')
     #print("calculate dists:", t)
     db.delete_similarities()
     #print("delete similarities:", t)
-    for i in range(dists.shape[0]):
-        for j in range(dists.shape[1]):
-            if i != j and dists[i, j] < args.similarity_threshold:
-                db.insert_similarity([face_descriptors[i][0], face_descriptors[j][0], dists[i, j]])
+    cx = dists.tocoo()    
+    for i,j,d in zip(cx.row, cx.col, cx.data):
+        if d > 0:
+            db.insert_similarity([face_descriptors[i][0], face_descriptors[j][0], d])
     #print("save similarities:", t)
     db.commit()
     #print("commit:", t)
