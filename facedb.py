@@ -76,6 +76,12 @@ def insert_similarity(row):
     VALUES (?,?,?)""", row)
     return c.lastrowid
 
+def insert_similarities(rows):
+    c = conn.cursor()
+    c.executemany("""INSERT INTO similarities 
+    (face1_id, face2_id, distance) 
+    VALUES (?,?,?)""", rows)
+
 def get_all_descriptors():
     c = conn.cursor()
     c.execute("SELECT face_id, descriptor FROM faces")

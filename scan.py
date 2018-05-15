@@ -149,14 +149,13 @@ def compute_similarities():
     #print("calculate dists:", t)
     db.delete_similarities()
     #print("delete similarities:", t)
-    for i in range(dists.shape[0]):
-        for j in range(dists.shape[1]):
-            if i != j and dists[i, j] < args.similarity_threshold:
-                db.insert_similarity([face_descriptors[i][0], face_descriptors[j][0], dists[i, j]])
+    idx = np.where(dists < args.similarity_threshold)
+    similarities = [(face_descriptors[i][0], face_descriptors[j][0], dists[i, j]) for i, j in zip(*idx) if i != j]
+    db.insert_similarities(similarities)
     #print("save similarities:", t)
     db.commit()
     #print("commit:", t)
-    print(", Time: %.2fs" % t.total())
+    print(", Similarities: %d, Time: %.2fs" % (len(similarities), t.total()))
 
 parser = argparse.ArgumentParser()
 parser.add_argument("dir")

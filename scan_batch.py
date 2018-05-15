@@ -5,7 +5,6 @@ import magic
 import exifread
 import numpy as np
 import facedb as db
-from sklearn.neighbors import NearestNeighbors
 import json
 import time
 import os
@@ -175,22 +174,18 @@ def compute_similarities():
 
     descriptors = np.array([json.loads(f[1]) for f in face_descriptors])
     #print("convert to array:", t)
-    nn = NearestNeighbors(radius=args.similarity_threshold)
-    #print("create nn:", t)
-    nn.fit(descriptors)
-    #print("fit nn:", t)
-    dists = nn.radius_neighbors_graph(descriptors, mode='distance')
+    sumsquares = np.sum(np.square(descriptors), axis=-1)
+    dists = np.sqrt(np.maximum(sumsquares[np.newaxis] + sumsquares[:, np.newaxis] - 2 * np.dot(descriptors, descriptors.T), 0))
     #print("calculate dists:", t)
     db.delete_similarities()
     #print("delete similarities:", t)
-    cx = dists.tocoo()    
-    for i,j,d in zip(cx.row, cx.col, cx.data):
-        if d > 0:
-            db.insert_similarity([face_descriptors[i][0], face_descriptors[j][0], d])
+    idx = np.where(dists < args.similarity_threshold)
+    similarities = [(face_descriptors[i][0], face_descriptors[j][0], dists[i, j]) for i, j in zip(*idx) if i != j]
+    db.insert_similarities(similarities)
     #print("save similarities:", t)
     db.commit()
     #print("commit:", t)
-    print(", Time: %.2fs" % t.total())
+    print(", Similarities: %d, Time: %.2fs" % (len(similarities), t.total()))
 
 parser = argparse.ArgumentParser()
 parser.add_argument("dir")
