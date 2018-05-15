@@ -4,87 +4,11 @@ import cv2
 import magic
 import exifread
 import numpy as np
-import sqlite3
+import facedb as db
 import json
 import time
 import os
 import argparse
-
-def create_tables():
-    conn.execute("""CREATE TABLE IF NOT EXISTS images (
-    image_id INTEGER PRIMARY KEY NOT NULL,
-    type TEXT CHECK(type IN ('image', 'video', 'pbimage', 'pbvideo', 'google', 'crime')) NOT NULL,
-    filepath TEXT NOT NULL,
-    image_width INTEGER NOT NULL, 
-    image_height INTEGER NOT NULL, 
-    resized_filepath TEXT, 
-    resized_width INTEGER NOT NULL, 
-    resized_height INTEGER NOT NULL, 
-    frame_num INTEGER,
-    orientation TEXT CHECK(orientation IN ('portrait', 'landscape')),
-    num_faces INTEGER NOT NULL,
-    exif_data TEXT,
-    UNIQUE(filepath, frame_num)
-)""")
-
-    conn.execute("""CREATE TABLE IF NOT EXISTS faces (
-    face_id INTEGER PRIMARY KEY NOT NULL,
-    image_id INTEGER NOT NULL,
-    face_num INTEGER NOT NULL,
-    left REAL NOT NULL,
-    top REAL NOT NULL,
-    right REAL NOT NULL,
-    bottom REAL NOT NULL,
-    width REAL NOT NULL,
-    height REAL NOT NULL,
-    landmarks TEXT NOT NULL, 
-    descriptor TEXT NOT NULL,
-    FOREIGN KEY (image_id) REFERENCES images(image_id)
-    UNIQUE(image_id, face_num)
-)""")
-
-    conn.execute("""CREATE TABLE IF NOT EXISTS similarities (
-    face1_id INTEGER NOT NULL,
-    face2_id INTEGER NOT NULL,
-    distance REAL NOT NULL,
-    FOREIGN KEY (face1_id) REFERENCES faces(face_id)
-    FOREIGN KEY (face2_id) REFERENCES faces(face_id)
-    UNIQUE(face1_id, face2_id)
-)""")
-
-def insert_image(row):
-    c = conn.cursor()
-    c.execute("""INSERT INTO images 
-    (type, filepath, image_width, image_height, resized_filepath, resized_width, resized_height, frame_num, exif_data, num_faces) 
-    VALUES (?,?,?,?,?,?,?,?,?,?)""", row)
-    return c.lastrowid
-
-def insert_face(row):
-    c = conn.cursor()
-    c.execute("""INSERT INTO faces 
-    (image_id, face_num, left, top, right, bottom, width, height, landmarks, descriptor) 
-    VALUES (?,?,?,?,?,?,?,?,?,?)""", row)
-    return c.lastrowid
-
-def delete_similarities():
-    conn.execute("DELETE FROM similarities")
-
-def insert_similarity(row):
-    c = conn.cursor()
-    c.execute("""INSERT INTO similarities 
-    (face1_id, face2_id, distance) 
-    VALUES (?,?,?)""", row)
-    return c.lastrowid
-
-def get_all_descriptors():
-    c = conn.cursor()
-    c.execute("SELECT face_id, descriptor FROM faces")
-    return c.fetchall()
-
-def file_exists(filepath):
-    c = conn.cursor()
-    c.execute("SELECT 1 FROM images WHERE filepath = ?", (filepath,))
-    return c.fetchone() is not None
 
 def resize_image(img, size):
     fx = float(size) / img.shape[1]
@@ -149,7 +73,7 @@ def process_queue():
     faces_queue = detector(grays_queue, args.upscale, batch_size=len(grays_queue))
 
     for faces, img, gray, data in zip(faces_queue, images_queue, grays_queue, data_queue):
-        image_id = insert_image(data + [len(faces)])
+        image_id = db.insert_image(data + [len(faces)])
 
         poses = dlib.full_object_detections()
         rects = []
@@ -174,7 +98,7 @@ def process_queue():
             landmarks = [[float(p.x) / resized_width, float(p.y) / resized_height] for p in pose.parts()]
             descriptor = list(descriptor)
             
-            face_id = insert_face([image_id, i, face_left, face_top, face_right, face_bottom, face_width, face_height, json.dumps(landmarks), json.dumps(descriptor)])
+            face_id = db.insert_face([image_id, i, face_left, face_top, face_right, face_bottom, face_width, face_height, json.dumps(landmarks), json.dumps(descriptor)])
 
             if args.save_resized:
                 facepath = os.path.join(args.save_resized, "face_%02d.jpg" % face_id)
@@ -183,19 +107,17 @@ def process_queue():
         num_images += 1
         num_faces += len(faces)
 
-    conn.commit()
+    db.commit()
 
     images_queue.clear()    
     grays_queue.clear()    
     data_queue.clear()    
 
     elapsed = time.time() - start_time
-    print("\rFiles: %d, Images: %d, Faces: %d, Elapsed: %.2fs, Average per image: %.3fs" % (num_files, num_images, num_faces, elapsed, elapsed / num_images), end='')
+    print("\rFiles: %d, Images: %d, Faces: %d, Elapsed: %.2fs, Average per image: %.3fs" % (num_files, num_images, num_faces, elapsed, elapsed / max(num_images, 1)), end='')
 
 def process_image_file(filepath):
     #print('Image:', filepath)
-    if file_exists(filepath):
-        return
     img = cv2.imread(filepath)
     if img is None:
         return
@@ -206,8 +128,6 @@ def process_image_file(filepath):
 
 def process_video_file(filepath):
     #print('Video:', filepath)
-    if file_exists(filepath):
-        return
     cap = cv2.VideoCapture(filepath)
     #print()
     #print("FPS:", cap.get(cv2.CAP_PROP_FPS), "frame count:", cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -216,12 +136,11 @@ def process_video_file(filepath):
     frame_num = 0
     used_images = 0
     while cap.isOpened() and used_images < args.video_max_images:
-        #print("msec:", cap.get(cv2.CAP_PROP_POS_MSEC), "frame:", cap.get(cv2.CAP_PROP_POS_FRAMES), )
         # just grab the frame, do not decode
         ret = cap.grab()
         if not ret:
             break
-        # process one frame per second
+        # process one frame after interval
         if frame_num % frame_interval == 0:
             # decode the grabbed frame
             ret, img = cap.retrieve()
@@ -246,7 +165,7 @@ class Timer(object):
 
 def compute_similarities():
     t = Timer()
-    face_descriptors = get_all_descriptors()
+    face_descriptors = db.get_all_descriptors()
     #print("get_all_descriptors():", t)
 
     print("Faces: %d" % len(face_descriptors), end='')
@@ -256,19 +175,17 @@ def compute_similarities():
 
     descriptors = np.array([json.loads(f[1]) for f in face_descriptors])
     #print("convert to array:", t)
-    #dists = np.sqrt(np.sum(np.square(descriptors[np.newaxis] - descriptors[:, np.newaxis]), axis=-1))
     sumsquares = np.sum(np.square(descriptors), axis=-1)
     dists = np.sqrt(np.maximum(sumsquares[np.newaxis] + sumsquares[:, np.newaxis] - 2 * np.dot(descriptors, descriptors.T), 0))
-    #assert np.allclose(dists, dists2, atol=1e-7)
     #print("calculate dists:", t)
-    delete_similarities()
+    db.delete_similarities()
     #print("delete similarities:", t)
     for i in range(dists.shape[0]):
         for j in range(dists.shape[1]):
             if i != j and dists[i, j] < args.similarity_threshold:
-                insert_similarity([face_descriptors[i][0], face_descriptors[j][0], dists[i, j]])
+                db.insert_similarity([face_descriptors[i][0], face_descriptors[j][0], dists[i, j]])
     #print("save similarities:", t)
-    conn.commit()
+    db.commit()
     #print("commit:", t)
     print(", Time: %.2fs" % t.total())
 
@@ -299,8 +216,7 @@ if args.save_resized:
         if not os.path.isdir(args.save_resized):
             raise
 
-conn = sqlite3.connect(args.db)
-create_tables()
+db.connect(args.db)
 
 print("Processing files...")
 start_time = time.time()
@@ -309,13 +225,15 @@ num_images = 0
 num_faces = 0
 for dirpath, dirnames, filenames in os.walk(args.dir):
     for filename in filenames:
-        filepath = os.path.join(dirpath, filename)        
+        filepath = os.path.join(dirpath, filename)
+        num_files += 1
+        if db.file_exists(filepath):
+            continue
         mime_type = magic.from_file(filepath, mime=True)
         if mime_type.startswith('image/'):
             process_image_file(filepath)
         elif mime_type.startswith('video/'):
             process_video_file(filepath)
-        num_files += 1
 # process remaining images in the queue
 process_queue()
 print()
