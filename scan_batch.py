@@ -77,7 +77,6 @@ def process_queue():
     global num_images
     global num_faces
     global num_files
-    global new_descriptors
 
     faces_queue = detector(grays_queue, args.upscale, batch_size=len(grays_queue))
 
@@ -113,20 +112,17 @@ def process_queue():
                 facepath = os.path.join(args.save_faces, "face_%02d.jpg" % face_id)
                 cv2.imwrite(facepath, img[rect.top():rect.bottom(),rect.left():rect.right()])
 
-            if args.incremental_distances:
-                new_descriptors.append((face_id, descriptor))
-
         num_images += 1
         num_faces += len(faces)
 
     db.commit()
 
-    images_queue.clear()    
-    grays_queue.clear()    
-    data_queue.clear()    
+    images_queue.clear()
+    grays_queue.clear()
+    data_queue.clear()
 
     elapsed = time.time() - start_time
-    print("\rFiles: %d, Images: %d, Faces: %d, Elapsed: %.2fs, Average per image: %.3fs" % (num_files, num_images, num_faces, elapsed, elapsed / max(num_images, 1)), end='')
+    print("\rFiles: %d, Images: %d, Faces: %d, Elapsed: %.2fs, Images/s: %.1fs" % (num_files, num_images, num_faces, elapsed, num_images / elapsed), end='')
 
 def process_image_file(filepath):
     #print('Image:', filepath)
@@ -175,11 +171,6 @@ class Timer(object):
         return str(self.t())
 
 def compute_similarities():
-    global new_descriptors
-    if args.incremental_distances and len(new_descriptors) == 0:
-        print()
-        return
-
     t = Timer()
     all_descriptors = db.get_all_descriptors()
     #print("get_all_descriptors():", t)
@@ -188,26 +179,18 @@ def compute_similarities():
         print()
         return
 
-    X = np.array([json.loads(f[1]) for f in all_descriptors])
+    X = Y = np.array([json.loads(f[1]) for f in all_descriptors])
     #print("convert to array:", t)
-    X2 = np.sum(np.square(X), axis=-1)
-    if args.incremental_distances:
-        Y = np.array([f[1] for f in new_descriptors])
-        Y2 = np.sum(np.square(Y), axis=-1)
-    else:
-        new_descriptors = all_descriptors
-        Y = X
-        Y2 = X2
+    X2 = Y2 = np.sum(np.square(X), axis=-1)
     dists = np.sqrt(np.maximum(X2[:, np.newaxis] + Y2[np.newaxis] - 2 * np.dot(X, Y.T), 0))
     #print("calculate dists:", t)
 
-    if not args.incremental_distances:
-        db.delete_similarities()
+    db.delete_similarities()
     #print("delete similarities:", t)
     num_similarities = 0
     for i, j in zip(*np.where(dists < args.similarity_threshold)):
-        if all_descriptors[i][0] != new_descriptors[j][0]:
-            db.insert_similarity([all_descriptors[i][0], new_descriptors[j][0], dists[i, j]])
+        if i != j:
+            db.insert_similarity([all_descriptors[i][0], all_descriptors[j][0], dists[i, j]])
             num_similarities += 1
     #print("save similarities:", t)
     db.commit()
@@ -227,7 +210,6 @@ parser.add_argument("--resize", type=int, default=1024)
 parser.add_argument("--save_resized")
 parser.add_argument("--save_faces")
 parser.add_argument("--similarity_threshold", type=float, default=0.5)
-parser.add_argument("--incremental_distances", action='store_true')
 parser.add_argument("--video_max_images", type=int, default=10)
 parser.add_argument("--type", choices=['default', 'photobooth', 'google', 'crime'], default='default')
 args = parser.parse_args()
@@ -249,7 +231,6 @@ start_time = time.time()
 num_files = 0
 num_images = 0
 num_faces = 0
-new_descriptors = []
 for dirpath, dirnames, filenames in os.walk(args.dir):
     for filename in filenames:
         filepath = os.path.join(dirpath, filename)
