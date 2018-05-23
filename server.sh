@@ -1,3 +1,3 @@
 #!/bin/bash
 
-nvidia-docker run -t -i -v /storage:/storage -p 9014:80 tambetm/faceid $*
+nvidia-docker run -t -i -v /opt/memopol3/data:/opt/memopol3/data -p 9014:80 tambetm/faceid $*
