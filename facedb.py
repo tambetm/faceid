@@ -10,6 +10,9 @@ def connect(db):
 def commit():
     conn.commit()
 
+def close():
+    conn.close()
+
 def create_tables():
     conn.execute("""CREATE TABLE IF NOT EXISTS images (
     image_id INTEGER PRIMARY KEY NOT NULL,

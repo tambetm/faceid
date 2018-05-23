@@ -10,6 +10,43 @@ import time
 import os
 import argparse
 
+args = None
+detector = None
+predictor = None
+facerec = None
+
+def parse_args(all_args=None):
+    global args
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--detector", choices=['hog', 'cnn'], default='hog')
+    parser.add_argument("--upscale", type=int, default=0)
+    parser.add_argument("--jitter", type=int, default=0)
+    parser.add_argument("--predictor_path", default='shape_predictor_68_face_landmarks.dat')
+    parser.add_argument("--face_rec_model_path", default='dlib_face_recognition_resnet_model_v1.dat')
+    parser.add_argument("--cnn_model_path", default='mmod_human_face_detector.dat')
+    parser.add_argument("--resize", type=int, default=1024)
+    parser.add_argument("--save_resized")
+    parser.add_argument("--save_faces")
+    parser.add_argument("--similarity_threshold", type=float, default=0.5)
+    parser.add_argument("--video_max_images", type=int, default=10)
+    parser.add_argument("--type", choices=['phone', 'photobooth', 'google', 'crime'], default='phone')
+    args, unknown_args = parser.parse_known_args(all_args)
+    return unknown_args
+
+def init():
+    global detector
+    global predictor
+    global facerec
+
+    if args.detector == 'hog':
+        detector = dlib.get_frontal_face_detector()
+    elif args.detector == 'cnn':
+        detector = dlib.cnn_face_detection_model_v1(args.cnn_model_path)
+    else:
+        assert False, "Unknown detector " + args.detector
+    predictor = dlib.shape_predictor(args.predictor_path)
+    facerec = dlib.face_recognition_model_v1(args.face_rec_model_path)
+
 def makedirs(dir):
     try: 
         os.makedirs(dir)
@@ -24,7 +61,7 @@ def resize_image(img, max_size):
     return cv2.resize(img, (0, 0), fx=f, fy=f)
 
 def get_image_type(image_type):
-    if args.type == 'default':
+    if args.type == 'phone':
         return image_type
     elif args.type == 'photobooth':
         return 'pb' + image_type
@@ -150,11 +187,12 @@ class Timer(object):
 def compute_similarities():
     t = Timer()
     all_descriptors = db.get_all_descriptors()
+    num_faces = len(all_descriptors)
     #print("get_all_descriptors():", t)
-    print("Faces: %d" % len(all_descriptors), end='')
-    if len(all_descriptors) < 2:
-        print()
-        return
+    #print("Faces: %d" % len(all_descriptors), end='')
+    if num_faces < 2:
+        #print()
+        return num_faces, 0
 
     X = Y = np.array([json.loads(f[1]) for f in all_descriptors])
     #print("convert to array:", t)
@@ -172,34 +210,17 @@ def compute_similarities():
     #print("save similarities:", t)
     db.commit()
     #print("commit:", t)
-    print(", Similarities: %d, Time: %.2fs" % (num_similarities, t.total()))
+    #print(", Similarities: %d, Time: %.2fs" % (num_similarities, t.total()))
+    return num_faces, num_similarities
 
 if __name__ == '__main__':
+    other_args = parse_args()
     parser = argparse.ArgumentParser()
     parser.add_argument("dir")
     parser.add_argument("db")
-    parser.add_argument("--detector", choices=['hog', 'cnn'], default='hog')
-    parser.add_argument("--upscale", type=int, default=0)
-    parser.add_argument("--jitter", type=int, default=0)
-    parser.add_argument("--predictor_path", default='shape_predictor_68_face_landmarks.dat')
-    parser.add_argument("--face_rec_model_path", default='dlib_face_recognition_resnet_model_v1.dat')
-    parser.add_argument("--cnn_model_path", default='mmod_human_face_detector.dat')
-    parser.add_argument("--resize", type=int, default=1024)
-    parser.add_argument("--save_resized")
-    parser.add_argument("--save_faces")
-    parser.add_argument("--similarity_threshold", type=float, default=0.5)
-    parser.add_argument("--video_max_images", type=int, default=10)
-    parser.add_argument("--type", choices=['default', 'photobooth', 'google', 'crime'], default='default')
-    args = parser.parse_args()
+    myargs = parser.parse_args(other_args)
 
-    if args.detector == 'hog':
-        detector = dlib.get_frontal_face_detector()
-    elif args.detector == 'cnn':
-        detector = dlib.cnn_face_detection_model_v1(args.cnn_model_path)
-    else:
-        assert False, "Unknown detector " + args.detector
-    predictor = dlib.shape_predictor(args.predictor_path)
-    facerec = dlib.face_recognition_model_v1(args.face_rec_model_path)
+    init()
 
     if args.save_resized:
         makedirs(args.save_resized)
@@ -207,14 +228,14 @@ if __name__ == '__main__':
     if args.save_faces:
         makedirs(args.save_faces)
 
-    db.connect(args.db)
+    db.connect(myargs.db)
 
     print("Processing files...")
     start_time = time.time()
     num_files = 0
     num_images = 0
     num_faces = 0
-    for dirpath, dirnames, filenames in os.walk(args.dir):
+    for dirpath, dirnames, filenames in os.walk(myargs.dir):
         for filename in filenames:
             filepath = os.path.join(dirpath, filename)
             file_images, file_faces = process_file(filepath)
