@@ -13,6 +13,12 @@ def commit():
 def close():
     conn.close()
 
+def dict_factory(cursor, row):
+    d = {}
+    for idx, col in enumerate(cursor.description):
+        d[col[0]] = row[idx]
+    return d
+
 def create_tables():
     conn.execute("""CREATE TABLE IF NOT EXISTS images (
     image_id INTEGER PRIMARY KEY NOT NULL,
@@ -99,8 +105,10 @@ def file_exists(filepath):
     return c.fetchone() is not None
 
 def get_common_faces(with_gps=False, limit=5, similarity_threshold=0.35):
+    conn.row_factory = dict_factory
     c = conn.cursor()
-    c.execute("""SELECT s.face1_id, count(1) 
+    conn.row_factory = None
+    c.execute("""SELECT s.face1_id as face_id, count(1) as count
     FROM similarities s 
     JOIN faces f1 ON s.face1_id = f1.face_id 
     JOIN faces f2 ON s.face2_id = f2.face_id 
