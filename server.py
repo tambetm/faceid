@@ -48,16 +48,24 @@ def scan():
 @app.route("/compute_similarities", methods=['POST'])
 def compute_similarities():
     params = request.get_json()
-    data_dir = params['data_dir']
-    dbfile = params['dbfile']
 
     start_time = time.time()
-    db.connect(os.path.join(data_dir, dbfile))
+    db.connect(os.path.join(params['data_dir'], params['dbfile']))
     num_faces, num_similarities = faceid.compute_similarities()
     db.close()
     elapsed = time.time() - start_time
 
     res = {'num_similarities': num_similarities, 'num_faces': num_faces, 'elapsed': elapsed}
+    return jsonify(res)
+
+@app.route("/get_common_faces", methods=['POST'])
+def get_common_faces():
+    params = request.get_json()
+
+    db.connect(os.path.join(params['data_dir'], params['dbfile']))
+    res = db.get_common_faces(params['with_gps'], params['limit'], params['similarity_threshold'])
+    db.close()
+
     return jsonify(res)
 
 if __name__ == '__main__':
