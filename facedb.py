@@ -24,9 +24,12 @@ def create_tables():
     resized_width INTEGER NOT NULL, 
     resized_height INTEGER NOT NULL, 
     frame_num INTEGER,
-    orientation TEXT CHECK(orientation IN ('portrait', 'landscape')),
     num_faces INTEGER NOT NULL,
     exif_data TEXT,
+    gps_lat REAL,
+    gps_lon REAL,
+    rotate INTEGER,
+    timestamp TEXT,
     UNIQUE(filepath, frame_num)
 )""")
 
@@ -58,8 +61,8 @@ def create_tables():
 def insert_image(row):
     c = conn.cursor()
     c.execute("""INSERT INTO images 
-    (type, filepath, image_width, image_height, resized_filepath, resized_width, resized_height, frame_num, exif_data, num_faces) 
-    VALUES (?,?,?,?,?,?,?,?,?,?)""", row)
+    (type, filepath, image_width, image_height, resized_filepath, resized_width, resized_height, frame_num, exif_data, num_faces, gps_lat, gps_lon, rotate, timestamp) 
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", row)
     return c.lastrowid
 
 def insert_face(row):

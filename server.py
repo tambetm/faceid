@@ -20,7 +20,14 @@ def scan():
     params = request.get_json()
     data_dir = params['data_dir']
     dbfile = params['dbfile']
+    source = params['source']
     files = params['files']
+
+    if faceid.args.save_resized:
+        faceid.makedirs(os.path.join(data_dir, faceid.args.save_resized))
+
+    if faceid.args.save_faces:
+        faceid.makedirs(os.path.join(data_dir, faceid.args.save_faces))
 
     start_time = time.time()
     db.connect(os.path.join(data_dir, dbfile))
@@ -28,8 +35,7 @@ def scan():
     num_images = 0
     num_faces = 0
     for file in files:
-        filepath = os.path.join(data_dir, file['filename'])
-        file_images, file_faces = faceid.process_file(filepath)
+        file_images, file_faces = faceid.process_file(data_dir, file, source)
         num_files += 1
         num_images += file_images
         num_faces += file_faces
