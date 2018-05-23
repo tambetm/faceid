@@ -9,6 +9,7 @@ other_args = faceid.parse_args()
 parser = argparse.ArgumentParser()
 parser.add_argument('--host', default='0.0.0.0')
 parser.add_argument('--port', type=int, default=9014)
+parser.add_argument('--debug', action='store_true')
 args = parser.parse_args(other_args)
 
 faceid.init()
@@ -30,7 +31,7 @@ def scan():
         faceid.makedirs(os.path.join(data_dir, faceid.args.save_faces))
 
     start_time = time.time()
-    db.connect(os.path.join(data_dir, dbfile))
+    db.connect(os.path.join(data_dir, dbfile), args.debug)
     num_files = 0
     num_images = 0
     num_faces = 0
@@ -50,7 +51,7 @@ def compute_similarities():
     params = request.get_json()
 
     start_time = time.time()
-    db.connect(os.path.join(params['data_dir'], params['dbfile']))
+    db.connect(os.path.join(params['data_dir'], params['dbfile']), args.debug)
     num_faces, num_similarities = faceid.compute_similarities()
     db.close()
     elapsed = time.time() - start_time
@@ -62,11 +63,11 @@ def compute_similarities():
 def get_common_faces():
     params = request.get_json()
 
-    db.connect(os.path.join(params['data_dir'], params['dbfile']))
+    db.connect(os.path.join(params['data_dir'], params['dbfile']), args.debug)
     res = db.get_common_faces(params['with_gps'], params['limit'], params['similarity_threshold'])
     db.close()
 
     return jsonify(res)
 
 if __name__ == '__main__':
-    app.run(args.host, args.port)
+    app.run(args.host, args.port, debug=args.debug)

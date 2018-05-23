@@ -18,9 +18,9 @@ facerec = None
 def parse_args(all_args=None):
     global args
     parser = argparse.ArgumentParser()
-    parser.add_argument("--detector", choices=['hog', 'cnn'], default='hog')
+    parser.add_argument("--detector", choices=['hog', 'cnn'], default='cnn')
     parser.add_argument("--upscale", type=int, default=0)
-    parser.add_argument("--jitter", type=int, default=0)
+    parser.add_argument("--jitter", type=int, default=10)
     parser.add_argument("--predictor_path", default='shape_predictor_68_face_landmarks.dat')
     parser.add_argument("--face_rec_model_path", default='dlib_face_recognition_resnet_model_v1.dat')
     parser.add_argument("--cnn_model_path", default='mmod_human_face_detector.dat')

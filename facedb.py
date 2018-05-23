@@ -2,9 +2,11 @@ import sqlite3
 
 conn = None
 
-def connect(db):
+def connect(db, debug=False):
     global conn
     conn = sqlite3.connect(db)
+    if debug:
+        conn.set_trace_callback(print)
     create_tables()
 
 def commit():
@@ -114,7 +116,7 @@ def get_common_faces(with_gps=False, limit=5, similarity_threshold=0.35):
     JOIN faces f2 ON s.face2_id = f2.face_id 
     JOIN images i1 ON f1.image_id = i1.image_id 
     JOIN images i2 ON f2.image_id = i2.image_id 
-    WHERE NOT ? OR (i1.gps_lat IS NOT NULL AND i1.gps_lon IS NOT NULL)
+    WHERE (NOT ? OR (i1.gps_lat IS NOT NULL AND i1.gps_lon IS NOT NULL))
         AND s.distance < ? 
         AND i1.type IN ('image', 'video')
         AND i2.type IN ('image', 'video')

@@ -1,1 +1,1 @@
-nvidia-docker build . -t tambetm/memopol
+nvidia-docker build . -t tambetm/faceid
