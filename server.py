@@ -35,15 +35,17 @@ def scan():
     num_files = 0
     num_images = 0
     num_faces = 0
+    results = []
     for file in files:
-        file_images, file_faces = faceid.process_file(data_dir, file, source)
+        file_images, file_faces, res = faceid.process_file(data_dir, file, source)
         num_files += 1
         num_images += file_images
         num_faces += file_faces
+        results += res
     db.close()
     elapsed = time.time() - start_time
 
-    res = {'num_files': num_files, 'num_images': num_images, 'num_faces': num_faces, 'elapsed': elapsed, 'images_per_s': num_images / elapsed}
+    res = {'num_files': num_files, 'num_images': num_images, 'num_faces': num_faces, 'elapsed': elapsed, 'images_per_s': num_images / elapsed, 'files': results}
     return jsonify(res)
 
 @app.route("/compute_similarities", methods=['POST'])

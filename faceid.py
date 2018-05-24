@@ -25,7 +25,7 @@ def parse_args(all_args=None):
     parser.add_argument("--face_rec_model_path", default='dlib_face_recognition_resnet_model_v1.dat')
     parser.add_argument("--cnn_model_path", default='mmod_human_face_detector.dat')
     parser.add_argument("--resize", type=int, default=1024)
-    parser.add_argument("--save_resized")
+    parser.add_argument("--save_resized", default="resized")
     parser.add_argument("--save_faces")
     parser.add_argument("--similarity_threshold", type=float, default=0.5)
     parser.add_argument("--video_max_images", type=int, default=10)
@@ -68,13 +68,18 @@ def get_image_type(image_type, source):
         return source
 
 def process_image(data_dir, data, img, image_type, frame_num=None, exif_data=None):
+    if int(data['rotate']) != 0:
+        assert int(data['rotate']) in [0, 90, 180, 270]
+        img = cv2.rotate(img, int(data['rotate']) // 90 - 1)
+        print("Rotating", data['rotate'])
+
     image_height, image_width, _ = img.shape
     resizepath, resized_height, resized_width = None, image_height, image_width
 
     if args.resize:
         img = resize_image(img, args.resize)
         if args.save_resized:
-            resizepath = os.path.join(args.save_resized, data['filename'])
+            resizepath = os.path.join(args.save_resized, data['relpath'])
             dirname = os.path.dirname(resizepath)
             makedirs(os.path.join(data_dir, dirname))
             basepath, ext = os.path.splitext(resizepath)
@@ -85,14 +90,11 @@ def process_image(data_dir, data, img, image_type, frame_num=None, exif_data=Non
                 resizepath += '.jpg'
             cv2.imwrite(os.path.join(data_dir, resizepath), img)
             resized_height, resized_width, _ = img.shape
-    if data['rotate'] != 0:
-        assert data['rotate'] in [0, 90, 180, 270]
-        img = cv2.rotate(img, data['rotate'] // 90 - 1)
-        print("Rotating", data['rotate'])
+
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     faces = detector(gray, args.upscale)
 
-    image_id = db.insert_image([image_type, data['filename'], image_width, image_height, resizepath, resized_width, resized_height, frame_num, exif_data, len(faces),
+    image_id = db.insert_image([image_type, data['relpath'], image_width, image_height, resizepath, resized_width, resized_height, frame_num, exif_data, len(faces),
         data['gps_lat'], data['gps_lon'], data['rotate'], data['timestamp']])
 
     poses = dlib.full_object_detections()
@@ -108,6 +110,7 @@ def process_image(data_dir, data, img, image_type, frame_num=None, exif_data=Non
     img_rgb = img[...,::-1] # BGR to RGB
     descriptors = facerec.compute_face_descriptor(img_rgb, poses, args.jitter)
 
+    faceres = []
     for i, (rect, pose, descriptor) in enumerate(zip(rects, poses, descriptors)):
         face_left = float(rect.left()) / resized_width
         face_top = float(rect.top()) / resized_height
@@ -124,11 +127,16 @@ def process_image(data_dir, data, img, image_type, frame_num=None, exif_data=Non
             facepath = os.path.join(data_dir, args.save_faces, "face_%05d.jpg" % face_id)
             cv2.imwrite(facepath, img[rect.top():rect.bottom(), rect.left():rect.right()])
 
+        faceres.append({'face_id': face_id, 'face_num': i, 'left': face_left, 'top': face_top, 'right': face_right, 'bottom': face_bottom, 'width': face_width, 'height': face_height,
+            'landmarks': landmarks})
+
     db.commit()
-    return len(faces)
+
+    res = {'relpath': data['relpath'], 'frame_num': frame_num, 'resizepath': resizepath, 'image_id': image_id, 'image_type': image_type, 'num_faces': len(faces), 'faces': faceres}
+    return len(faces), res
 
 def process_image_file(data_dir, data, source):
-    filepath = os.path.join(data_dir, data['filename'])
+    filepath = os.path.join(data_dir, data['relpath'])
     #print('Image:', filepath)
     img = cv2.imread(filepath)
     if img is None:
@@ -136,11 +144,11 @@ def process_image_file(data_dir, data, source):
     with open(filepath, 'rb') as f:
         tags = exifread.process_file(f, details=False)
         tags = {k:str(v) for k, v in tags.items()}
-    num_faces = process_image(data_dir, data, img, get_image_type('image', source), exif_data=json.dumps(tags))
-    return 1, num_faces
+    num_faces, res = process_image(data_dir, data, img, get_image_type('image', source), exif_data=json.dumps(tags))
+    return 1, num_faces, [res]
 
 def process_video_file(data_dir, data, source):
-    filepath = os.path.join(data_dir, data['filename'])
+    filepath = os.path.join(data_dir, data['relpath'])
     #print('Video:', filepath)
     cap = cv2.VideoCapture(filepath)
     #print()
@@ -150,6 +158,7 @@ def process_video_file(data_dir, data, source):
     frame_num = 0
     num_images = 0
     num_faces = 0
+    results = []
     while cap.isOpened() and num_images < args.video_max_images:
         #print("msec:", cap.get(cv2.CAP_PROP_POS_MSEC), "frame:", cap.get(cv2.CAP_PROP_POS_FRAMES), )
         # just grab the frame, do not decode
@@ -160,24 +169,25 @@ def process_video_file(data_dir, data, source):
             # decode the grabbed frame
             ret, img = cap.retrieve()
             assert ret
-            image_faces = process_image(data_dir, data, img, get_image_type('video', source), frame_num=frame_num)
+            image_faces, res = process_image(data_dir, data, img, get_image_type('video', source), frame_num=frame_num)
             num_images += 1
             num_faces += image_faces
+            results.append(res)
         frame_num += 1
     cap.release()
-    return num_images, num_faces
+    return num_images, num_faces, results
 
 def process_file(data_dir, data, source):
-    if db.file_exists(data['filename']):
-        return 0, 0
-    filepath = os.path.join(data_dir, data['filename'])
+    if db.file_exists(data['relpath']):
+        return 0, 0, []
+    filepath = os.path.join(data_dir, data['relpath'])
     mime_type = magic.from_file(filepath, mime=True)
     if mime_type.startswith('image/'):
         return process_image_file(data_dir, data, source)
     elif mime_type.startswith('video/'):
         return process_video_file(data_dir, data, source)
     else:
-        return 0, 0
+        return 0, 0, []
 
 class Timer(object):
     def __init__(self):
@@ -248,12 +258,12 @@ if __name__ == '__main__':
         for filename in filenames:
             filepath = os.path.join(dirpath, filename)
             data = {}
-            data['filename'] = os.path.relpath(filepath, myargs.dir)
+            data['relpath'] = os.path.relpath(filepath, myargs.dir)
             data['gps_lat'] = 43.433
             data['gps_lon'] = 23.232
             data['rotate'] = 0
             data['timestamp'] = "1970-01-18T14:33:35.118Z"
-            file_images, file_faces = process_file(myargs.dir, data, myargs.source)
+            file_images, file_faces, results = process_file(myargs.dir, data, myargs.source)
             num_files += 1
             num_images += file_images
             num_faces += file_faces

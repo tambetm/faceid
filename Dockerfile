@@ -21,10 +21,11 @@ ENV APACHE_LOG_DIR /var/log/apache2
 ENV APACHE_LOCK_DIR /var/lock/apache2
 ENV APACHE_PID_FILE /var/run/apache2.pid
 
-EXPOSE 80
+# Enable debugging
+ENV FLASK_ENV development
 
+EXPOSE 80
 COPY faceid.conf /etc/apache2/sites-available/000-default.conf
 
 # By default, simply start apache.
-CMD /usr/sbin/apache2ctl -D FOREGROUND & tail -f /var/log/apache2/*
-
+CMD /usr/sbin/apache2ctl -D FOREGROUND
