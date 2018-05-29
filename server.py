@@ -9,7 +9,7 @@ other_args = faceid.parse_args()
 parser = argparse.ArgumentParser()
 parser.add_argument('--host', default='0.0.0.0')
 parser.add_argument('--port', type=int, default=9014)
-parser.add_argument('--debug', action='store_true')
+parser.add_argument('--debug', action='store_true', default=True)
 args = parser.parse_args(other_args)
 
 faceid.init()
@@ -71,5 +71,15 @@ def get_common_faces():
 
     return jsonify(res)
 
+@app.route("/get_similar_faces", methods=['POST'])
+def get_similar_faces():
+    params = request.get_json()
+
+    db.connect(os.path.join(params['data_dir'], params['dbfile']), args.debug)
+    res = db.get_similar_faces(params['face_id'], params['limit'], params['similarity_threshold'])
+    db.close()
+
+    return jsonify(res)
+
 if __name__ == '__main__':
-    app.run(args.host, args.port, debug=args.debug)
+    app.run(args.host, args.port)

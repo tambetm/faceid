@@ -26,7 +26,7 @@ def parse_args(all_args=None):
     parser.add_argument("--cnn_model_path", default='mmod_human_face_detector.dat')
     parser.add_argument("--resize", type=int, default=1024)
     parser.add_argument("--save_resized", default="resized")
-    parser.add_argument("--save_faces")
+    parser.add_argument("--save_faces", default="faces")
     parser.add_argument("--similarity_threshold", type=float, default=0.5)
     parser.add_argument("--video_max_images", type=int, default=10)
     args, unknown_args = parser.parse_known_args(all_args)

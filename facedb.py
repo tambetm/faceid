@@ -110,27 +110,38 @@ def get_common_faces(with_gps=False, limit=5, similarity_threshold=0.35):
     conn.row_factory = dict_factory
     c = conn.cursor()
     conn.row_factory = None
-    c.execute("""SELECT s.face1_id as face_id, count(1) as count
+    '''
+    c.execute("""SELECT s.face1_id as face_id, count(1) as count, f1.*, i1.*
     FROM similarities s 
     JOIN faces f1 ON s.face1_id = f1.face_id 
     JOIN faces f2 ON s.face2_id = f2.face_id 
-    JOIN images i1 ON f1.image_id = i1.image_id 
-    JOIN images i2 ON f2.image_id = i2.image_id 
-    WHERE (NOT ? OR (i1.gps_lat IS NOT NULL AND i1.gps_lon IS NOT NULL))
-        AND s.distance < ? 
-        AND i1.type IN ('image', 'video')
-        AND i2.type IN ('image', 'video')
+    JOIN (SELECT image_id, gps_lat, gps_lon FROM images WHERE type IN ('image', 'video')) i1 ON f1.image_id = i1.image_id 
+    JOIN (SELECT image_id, gps_lat, gps_lon FROM images WHERE type IN ('image', 'video')) i2 ON f2.image_id = i2.image_id 
+    WHERE (NOT ? OR (i1.gps_lat IS NOT NULL AND i1.gps_lon IS NOT NULL)) AND s.distance < ?
+    GROUP BY s.face1_id
+    ORDER BY count(1) DESC
+    LIMIT ?""", (with_gps, similarity_threshold, limit,))
+    '''
+    c.execute("""SELECT s.face1_id as face_id, count(1) as count, f1.*, i1.*
+    FROM similarities s 
+    JOIN faces f1 ON s.face1_id = f1.face_id 
+    JOIN faces f2 ON s.face2_id = f2.face_id 
+    JOIN (SELECT min(image_id) as image_id, * FROM images WHERE type IN ('image', 'video') GROUP BY filepath) i1 ON f1.image_id = i1.image_id 
+    JOIN (SELECT min(image_id) as image_id, * FROM images WHERE type IN ('image', 'video') GROUP BY filepath) i2 ON f2.image_id = i2.image_id 
+    WHERE (NOT ? OR (i1.gps_lat IS NOT NULL AND i1.gps_lon IS NOT NULL)) AND s.distance < ?
     GROUP BY s.face1_id
     ORDER BY count(1) DESC
     LIMIT ?""", (with_gps, similarity_threshold, limit,))
     return c.fetchall()
 
 def get_similar_faces(face_id, limit=5, similarity_threshold=0.35):
+    conn.row_factory = dict_factory
     c = conn.cursor()
+    conn.row_factory = None
     c.execute("""SELECT f.*, i.*
     FROM similarities s 
     JOIN faces f ON s.face2_id = f.face_id 
-    JOIN images i ON f.image_id = i.image_id 
+    JOIN (SELECT min(image_id) as image_id, * FROM images WHERE type IN ('image', 'video') GROUP BY filepath) i ON f.image_id = i.image_id 
     WHERE s.face1_id = ? AND s.distance < ? 
     ORDER BY s.distance
     LIMIT ?""", (face_id, similarity_threshold, limit,))

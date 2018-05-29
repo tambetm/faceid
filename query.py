@@ -4,6 +4,7 @@ import argparse
 
 parser = argparse.ArgumentParser()
 parser.add_argument("db")
+parser.add_argument("--debug", action='store_true')
 parser.add_argument("--limit", type=int, default=5)
 parser.add_argument("--similarity_threshold", type=float, default=0.35)
 subparsers = parser.add_subparsers(dest='command')
@@ -17,7 +18,7 @@ criminals_parser.add_argument("face_id", type=int)
 contact_parser = subparsers.add_parser('get_contacts')
 args = parser.parse_args()
 
-db.connect(args.db)
+db.connect(args.db, args.debug)
 
 if args.command == 'get_common_faces':
     print(json.dumps(db.get_common_faces(args.with_gps, args.limit, args.similarity_threshold)))
