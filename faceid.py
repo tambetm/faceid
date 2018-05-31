@@ -73,17 +73,16 @@ def process_image(data_dir, data, img, image_type, image_source, frame_num=None,
 
     if args.resize:
         img = resize_image(img, args.resize)
+        resized_height, resized_width, _ = img.shape
         if args.save_resized:
-            resizepath = os.path.join(args.save_resized, data['relpath'])
-            dirname = os.path.dirname(resizepath)
-            makedirs(os.path.join(data_dir, dirname))
+            filename = os.path.basename(data['relpath'])
+            resizepath = os.path.join(args.save_resized, filename)
             basepath, ext = os.path.splitext(resizepath)
             if ext == '' or frame_num is not None:
                 resizepath = basepath
                 if frame_num is not None:
                     resizepath += "_%04d" % frame_num
                 resizepath += '.jpg'
-            resized_height, resized_width, _ = img.shape
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     faces = detector(gray, args.upscale)
