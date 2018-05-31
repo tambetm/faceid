@@ -24,8 +24,9 @@ def argparser():
     parser.add_argument("--face_rec_model_path", default='dlib_face_recognition_resnet_model_v1.dat')
     parser.add_argument("--cnn_model_path", default='mmod_human_face_detector.dat')
     parser.add_argument("--resize", type=int, default=1024)
-    parser.add_argument("--save_resized")
-    parser.add_argument("--save_faces")
+    parser.add_argument("--save_resized", default="resized")
+    parser.add_argument("--save_faces", default="faces")
+    parser.add_argument("--draw_faces", action="store_true", default=True)
     parser.add_argument("--identity_threshold", type=float, default=0.35)
     parser.add_argument("--similarity_threshold", type=float, default=0.6)
     parser.add_argument("--video_max_images", type=int, default=10)
@@ -82,7 +83,6 @@ def process_image(data_dir, data, img, image_type, image_source, frame_num=None,
                 if frame_num is not None:
                     resizepath += "_%04d" % frame_num
                 resizepath += '.jpg'
-            cv2.imwrite(os.path.join(data_dir, resizepath), img)
             resized_height, resized_width, _ = img.shape
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -118,6 +118,12 @@ def process_image(data_dir, data, img, image_type, image_source, frame_num=None,
         
         face_id = db.insert_face([image_id, i, face_left, face_top, face_right, face_bottom, face_width, face_height, json.dumps(landmarks), json.dumps(descriptor)])
 
+        # draw faces on resized images
+        if args.draw_faces:
+            cv2.rectangle(img, (rect.left(), rect.top()), (rect.right(), rect.bottom()), (255, 0, 255), 2)
+            for p in pose.parts():
+                cv2.circle(img, (p.x, p.y), 1, color=(0, 255, 255), thickness=-1)
+
         if args.save_faces:
             facepath = os.path.join(data_dir, args.save_faces, "face_%05d.jpg" % face_id)
             cv2.imwrite(facepath, img[rect.top():rect.bottom(), rect.left():rect.right()])
@@ -126,6 +132,10 @@ def process_image(data_dir, data, img, image_type, image_source, frame_num=None,
             'landmarks': landmarks})
 
     db.commit()
+
+    # save resized image after drawing faces
+    if args.resize and args.save_resized:
+        cv2.imwrite(os.path.join(data_dir, resizepath), img)
 
     res = {'relpath': data['relpath'], 'frame_num': frame_num, 'resizepath': resizepath, 'image_id': image_id, 'image_type': image_type, 'num_faces': len(faces), 'faces': faceres}
     return len(faces), res
