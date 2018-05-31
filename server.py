@@ -5,14 +5,14 @@ import os
 import time
 import argparse
 
-other_args = faceid.parse_args()
-parser = argparse.ArgumentParser()
+parser = argparse.ArgumentParser(parents=[faceid.argparser()])
 parser.add_argument('--host', default='0.0.0.0')
 parser.add_argument('--port', type=int, default=9014)
-parser.add_argument('--debug', action='store_true', default=True)
-args = parser.parse_args(other_args)
+parser.add_argument('--debug', action='store_true')
+parser.add_argument('--debug_server', action='store_true')
+args = parser.parse_args()
 
-faceid.init()
+faceid.init(args)
 
 app = Flask(__name__)
 
@@ -54,19 +54,29 @@ def compute_similarities():
 
     start_time = time.time()
     db.connect(os.path.join(params['data_dir'], params['dbfile']), args.debug)
-    num_faces, num_similarities = faceid.compute_similarities()
+    num_faces, num_similarities, num_clusters = faceid.compute_similarities()
     db.close()
     elapsed = time.time() - start_time
 
-    res = {'num_similarities': num_similarities, 'num_faces': num_faces, 'elapsed': elapsed}
+    res = {'num_similarities': num_similarities, 'num_clusters': num_clusters, 'num_faces': num_faces, 'elapsed': elapsed}
     return jsonify(res)
 
-@app.route("/get_common_faces", methods=['POST'])
-def get_common_faces():
+@app.route("/get_clusters", methods=['POST'])
+def get_clusters():
     params = request.get_json()
 
     db.connect(os.path.join(params['data_dir'], params['dbfile']), args.debug)
-    res = db.get_common_faces(params['with_gps'], params['limit'], params['similarity_threshold'])
+    res = db.get_clusters(params['with_gps'], params['limit'])
+    db.close()
+
+    return jsonify(res)
+
+@app.route("/get_cluster_faces", methods=['POST'])
+def get_cluster_faces():
+    params = request.get_json()
+
+    db.connect(os.path.join(params['data_dir'], params['dbfile']), args.debug)
+    res = db.get_cluster_faces(params['cluster_num'], params['limit'])
     db.close()
 
     return jsonify(res)
@@ -81,5 +91,25 @@ def get_similar_faces():
 
     return jsonify(res)
 
+@app.route("/get_selfies", methods=['POST'])
+def get_selfies():
+    params = request.get_json()
+
+    db.connect(os.path.join(params['data_dir'], params['dbfile']), args.debug)
+    res = db.get_selfies(params['limit'])
+    db.close()
+
+    return jsonify(res)
+
+@app.route("/get_criminals", methods=['POST'])
+def get_criminals():
+    params = request.get_json()
+
+    db.connect(os.path.join(params['data_dir'], params['dbfile']), args.debug)
+    res = db.get_criminals(params['face_id'], params['limit'], params['similarity_threshold'])
+    db.close()
+
+    return jsonify(res)
+
 if __name__ == '__main__':
-    app.run(args.host, args.port)
+    app.run(args.host, args.port, debug=args.debug_server)

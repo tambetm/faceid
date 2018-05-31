@@ -15,9 +15,8 @@ detector = None
 predictor = None
 facerec = None
 
-def parse_args(all_args=None):
-    global args
-    parser = argparse.ArgumentParser()
+def argparser():
+    parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--detector", choices=['hog', 'cnn'], default='cnn')
     parser.add_argument("--upscale", type=int, default=0)
     parser.add_argument("--jitter", type=int, default=10)
@@ -25,17 +24,20 @@ def parse_args(all_args=None):
     parser.add_argument("--face_rec_model_path", default='dlib_face_recognition_resnet_model_v1.dat')
     parser.add_argument("--cnn_model_path", default='mmod_human_face_detector.dat')
     parser.add_argument("--resize", type=int, default=1024)
-    parser.add_argument("--save_resized", default="resized")
-    parser.add_argument("--save_faces", default="faces")
-    parser.add_argument("--similarity_threshold", type=float, default=0.5)
+    parser.add_argument("--save_resized")
+    parser.add_argument("--save_faces")
+    parser.add_argument("--identity_threshold", type=float, default=0.35)
+    parser.add_argument("--similarity_threshold", type=float, default=0.6)
     parser.add_argument("--video_max_images", type=int, default=10)
-    args, unknown_args = parser.parse_known_args(all_args)
-    return unknown_args
+    return parser
 
-def init():
+def init(_args):
+    global args
     global detector
     global predictor
     global facerec
+
+    args = _args
 
     if args.detector == 'hog':
         detector = dlib.get_frontal_face_detector()
@@ -59,15 +61,7 @@ def resize_image(img, max_size):
     f = min(fx, fy, 1)
     return cv2.resize(img, (0, 0), fx=f, fy=f)
 
-def get_image_type(image_type, source):
-    if source == 'phone':
-        return image_type
-    elif source == 'photobooth':
-        return 'pb' + image_type
-    else:
-        return source
-
-def process_image(data_dir, data, img, image_type, frame_num=None, exif_data=None):
+def process_image(data_dir, data, img, image_type, image_source, frame_num=None, exif_data=None):
     if int(data['rotate']) != 0:
         assert int(data['rotate']) in [0, 90, 180, 270]
         img = cv2.rotate(img, int(data['rotate']) // 90 - 1)
@@ -94,7 +88,8 @@ def process_image(data_dir, data, img, image_type, frame_num=None, exif_data=Non
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     faces = detector(gray, args.upscale)
 
-    image_id = db.insert_image([image_type, data['relpath'], image_width, image_height, resizepath, resized_width, resized_height, frame_num, exif_data, len(faces),
+    image_id = db.insert_image([image_type, image_source, data['relpath'], image_width, image_height, 
+        resizepath, resized_width, resized_height, frame_num, exif_data, len(faces),
         data['gps_lat'], data['gps_lon'], data['rotate'], data['timestamp']])
 
     poses = dlib.full_object_detections()
@@ -144,7 +139,7 @@ def process_image_file(data_dir, data, source):
     with open(filepath, 'rb') as f:
         tags = exifread.process_file(f, details=False)
         tags = {k:str(v) for k, v in tags.items()}
-    num_faces, res = process_image(data_dir, data, img, get_image_type('image', source), exif_data=json.dumps(tags))
+    num_faces, res = process_image(data_dir, data, img, 'image', source, exif_data=json.dumps(tags))
     return 1, num_faces, [res]
 
 def process_video_file(data_dir, data, source):
@@ -169,7 +164,7 @@ def process_video_file(data_dir, data, source):
             # decode the grabbed frame
             ret, img = cap.retrieve()
             assert ret
-            image_faces, res = process_image(data_dir, data, img, get_image_type('video', source), frame_num=frame_num)
+            image_faces, res = process_image(data_dir, data, img, 'video', source, frame_num=frame_num)
             num_images += 1
             num_faces += image_faces
             results.append(res)
@@ -205,6 +200,8 @@ class Timer(object):
 def compute_similarities():
     t = Timer()
     all_descriptors = db.get_all_descriptors()
+    descriptors = [json.loads(f[1]) for f in all_descriptors]
+    face_ids = [f[0] for f in all_descriptors]
     num_faces = len(all_descriptors)
     #print("get_all_descriptors():", t)
     #print("Faces: %d" % len(all_descriptors), end='')
@@ -212,7 +209,7 @@ def compute_similarities():
         #print()
         return num_faces, 0
 
-    X = Y = np.array([json.loads(f[1]) for f in all_descriptors])
+    X = Y = np.array(descriptors)
     #print("convert to array:", t)
     X2 = Y2 = np.sum(np.square(X), axis=-1)
     dists = np.sqrt(np.maximum(X2[:, np.newaxis] + Y2[np.newaxis] - 2 * np.dot(X, Y.T), 0))
@@ -223,23 +220,29 @@ def compute_similarities():
     num_similarities = 0
     for i, j in zip(*np.where(dists < args.similarity_threshold)):
         if i != j:
-            db.insert_similarity([all_descriptors[i][0], all_descriptors[j][0], dists[i, j]])
+            db.insert_similarity([face_ids[i], face_ids[j], dists[i, j]])
             num_similarities += 1
     #print("save similarities:", t)
+
+    # cluster faces and update labels
+    descriptors_dlib = [dlib.vector(d) for d in descriptors]
+    clusters = dlib.chinese_whispers_clustering(descriptors_dlib, args.identity_threshold)
+    db.update_labels(zip(clusters, face_ids))
+    num_clusters = len(set(clusters))
+
     db.commit()
     #print("commit:", t)
     #print(", Similarities: %d, Time: %.2fs" % (num_similarities, t.total()))
-    return num_faces, num_similarities
+    return num_faces, num_similarities, num_clusters
 
 if __name__ == '__main__':
-    other_args = parse_args()
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(parents=[argparser()])
     parser.add_argument("dir")
     parser.add_argument("db")
-    parser.add_argument("--source", choices=['phone', 'photobooth', 'google', 'crime'], default='phone')
-    myargs = parser.parse_args(other_args)
+    parser.add_argument("--source", choices=['phone', 'photobooth', 'google', 'interpol'], default='phone')
+    args = parser.parse_args()
 
-    init()
+    init(args)
 
     if args.save_resized:
         makedirs(os.path.join(args.dir, args.save_resized))
@@ -247,23 +250,23 @@ if __name__ == '__main__':
     if args.save_faces:
         makedirs(os.path.join(args.dir, args.save_faces))
 
-    db.connect(myargs.db)
+    db.connect(args.db)
 
     print("Processing files...")
     start_time = time.time()
     num_files = 0
     num_images = 0
     num_faces = 0
-    for dirpath, dirnames, filenames in os.walk(myargs.dir):
+    for dirpath, dirnames, filenames in os.walk(args.dir):
         for filename in filenames:
             filepath = os.path.join(dirpath, filename)
             data = {}
-            data['relpath'] = os.path.relpath(filepath, myargs.dir)
+            data['relpath'] = os.path.relpath(filepath, args.dir)
             data['gps_lat'] = 43.433
             data['gps_lon'] = 23.232
             data['rotate'] = 0
             data['timestamp'] = "1970-01-18T14:33:35.118Z"
-            file_images, file_faces, results = process_file(myargs.dir, data, myargs.source)
+            file_images, file_faces, results = process_file(args.dir, data, args.source)
             num_files += 1
             num_images += file_images
             num_faces += file_faces
