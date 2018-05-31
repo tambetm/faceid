@@ -21,7 +21,7 @@ def scan():
     params = request.get_json()
     data_dir = params['data_dir']
     dbfile = params['dbfile']
-    source = params['source']
+    source = params.get('source', args.source)
     files = params['files']
 
     if faceid.args.save_resized:
@@ -54,7 +54,10 @@ def compute_similarities():
 
     start_time = time.time()
     db.connect(os.path.join(params['data_dir'], params['dbfile']), args.debug)
-    num_faces, num_similarities, num_clusters = faceid.compute_similarities()
+    num_faces, num_similarities, num_clusters = faceid.compute_similarities(
+            float(params.get('similarity_threshold', args.similarity_threshold)), 
+            float(params.get('identity_threshold', args.identity_threshold))
+    )
     db.close()
     elapsed = time.time() - start_time
 
@@ -66,7 +69,11 @@ def get_clusters():
     params = request.get_json()
 
     db.connect(os.path.join(params['data_dir'], params['dbfile']), args.debug)
-    res = db.get_clusters(params['with_gps'], params['limit'])
+    res = db.get_clusters(
+            float(params.get('confidence_threshold', args.confidence_threshold)), 
+            params.get('with_gps', False), 
+            int(params.get('limit', 5))
+    )
     db.close()
 
     return jsonify(res)
@@ -76,7 +83,11 @@ def get_cluster_faces():
     params = request.get_json()
 
     db.connect(os.path.join(params['data_dir'], params['dbfile']), args.debug)
-    res = db.get_cluster_faces(params['cluster_num'], params['limit'])
+    res = db.get_cluster_faces(
+            int(params['cluster_num']),
+            params.get('with_gps', False), 
+            int(params.get('limit', 5))
+    )
     db.close()
 
     return jsonify(res)
@@ -86,7 +97,11 @@ def get_similar_faces():
     params = request.get_json()
 
     db.connect(os.path.join(params['data_dir'], params['dbfile']), args.debug)
-    res = db.get_similar_faces(params['face_id'], params['limit'], params['similarity_threshold'])
+    res = db.get_similar_faces(
+            int(params['face_id']),
+            int(params.get('limit', 5)),
+            float(params.get('similarity_threshold', args.similarity_threshold))
+    )
     db.close()
 
     return jsonify(res)
@@ -96,7 +111,9 @@ def get_selfies():
     params = request.get_json()
 
     db.connect(os.path.join(params['data_dir'], params['dbfile']), args.debug)
-    res = db.get_selfies(params['limit'])
+    res = db.get_selfies(
+            int(params.get('limit', 5))
+    )
     db.close()
 
     return jsonify(res)
@@ -106,7 +123,12 @@ def get_criminals():
     params = request.get_json()
 
     db.connect(os.path.join(params['data_dir'], params['dbfile']), args.debug)
-    res = db.get_criminals(params['face_id'], params['limit'], params['similarity_threshold'])
+    res = db.get_criminals(
+            int(params['face_id']), 
+            #int(params['cluster_num']),
+            int(params.get('limit', 5)),
+            float(params.get('similarity_threshold', args.similarity_threshold))
+    )
     db.close()
 
     return jsonify(res)

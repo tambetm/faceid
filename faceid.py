@@ -27,8 +27,10 @@ def argparser():
     parser.add_argument("--save_resized", default="resized")
     parser.add_argument("--save_faces", default="faces")
     parser.add_argument("--draw_faces", action="store_true", default=True)
-    parser.add_argument("--identity_threshold", type=float, default=0.35)
+    parser.add_argument("--source", choices=['phone', 'photobooth', 'google', 'interpol'], default='phone')
+    parser.add_argument("--identity_threshold", type=float, default=0.4)
     parser.add_argument("--similarity_threshold", type=float, default=0.6)
+    parser.add_argument("--confidence_threshold", type=float, default=0.95)
     parser.add_argument("--video_max_images", type=int, default=10)
     return parser
 
@@ -89,13 +91,17 @@ def process_image(data_dir, data, img, image_type, image_source, frame_num=None,
 
     image_id = db.insert_image([image_type, image_source, data['relpath'], image_width, image_height, 
         resizepath, resized_width, resized_height, frame_num, exif_data, len(faces),
-        data['gps_lat'], data['gps_lon'], data['rotate'], data['timestamp']])
+        data.get('gps_lat'), data.get('gps_lon'), data.get('camera_side'), data.get('rotate', 0), data.get('timestamp')])
 
     poses = dlib.full_object_detections()
     rects = []
+    confs = []
     for rect in faces:
         if args.detector == 'cnn':
+            confs.append(rect.confidence)
             rect = rect.rect
+        else:
+            confs.append(1.)
         pose = predictor(gray, rect)
         poses.append(pose)
         rects.append(rect)
@@ -105,7 +111,7 @@ def process_image(data_dir, data, img, image_type, image_source, frame_num=None,
     descriptors = facerec.compute_face_descriptor(img_rgb, poses, args.jitter)
 
     faceres = []
-    for i, (rect, pose, descriptor) in enumerate(zip(rects, poses, descriptors)):
+    for i, (rect, conf, pose, descriptor) in enumerate(zip(rects, confs, poses, descriptors)):
         face_left = float(rect.left()) / resized_width
         face_top = float(rect.top()) / resized_height
         face_right = float(rect.right()) / resized_width
@@ -115,7 +121,7 @@ def process_image(data_dir, data, img, image_type, image_source, frame_num=None,
         landmarks = [[float(p.x) / resized_width, float(p.y) / resized_height] for p in pose.parts()]
         descriptor = list(descriptor)
         
-        face_id = db.insert_face([image_id, i, face_left, face_top, face_right, face_bottom, face_width, face_height, json.dumps(landmarks), json.dumps(descriptor)])
+        face_id = db.insert_face([image_id, i, face_left, face_top, face_right, face_bottom, face_width, face_height, conf, json.dumps(landmarks), json.dumps(descriptor)])
 
         # draw faces on resized images
         if args.draw_faces:
@@ -128,7 +134,7 @@ def process_image(data_dir, data, img, image_type, image_source, frame_num=None,
             cv2.imwrite(facepath, img[max(rect.top(), 0):rect.bottom(), max(rect.left(), 0):rect.right()])
 
         faceres.append({'face_id': face_id, 'face_num': i, 'left': face_left, 'top': face_top, 'right': face_right, 'bottom': face_bottom, 'width': face_width, 'height': face_height,
-            'landmarks': landmarks})
+            'confidence': conf, 'landmarks': landmarks})
 
     db.commit()
 
@@ -144,7 +150,7 @@ def process_image_file(data_dir, data, source):
     #print('Image:', filepath)
     img = cv2.imread(filepath)
     if img is None:
-        return 0, 0
+        return 0, 0, []
     with open(filepath, 'rb') as f:
         tags = exifread.process_file(f, details=False)
         tags = {k:str(v) for k, v in tags.items()}
@@ -206,7 +212,7 @@ class Timer(object):
     def __str__(self):
         return str(self.t())
 
-def compute_similarities():
+def compute_similarities(similarity_threshold=0.6, identity_threshold=0.4):
     t = Timer()
     all_descriptors = db.get_all_descriptors()
     descriptors = [json.loads(f[1]) for f in all_descriptors]
@@ -216,7 +222,7 @@ def compute_similarities():
     #print("Faces: %d" % len(all_descriptors), end='')
     if num_faces < 2:
         #print()
-        return num_faces, 0
+        return num_faces, 0, 0
 
     X = Y = np.array(descriptors)
     #print("convert to array:", t)
@@ -227,7 +233,7 @@ def compute_similarities():
     db.delete_similarities()
     #print("delete similarities:", t)
     num_similarities = 0
-    for i, j in zip(*np.where(dists < args.similarity_threshold)):
+    for i, j in zip(*np.where(dists < similarity_threshold)):
         if i != j:
             db.insert_similarity([face_ids[i], face_ids[j], dists[i, j]])
             num_similarities += 1
@@ -235,7 +241,7 @@ def compute_similarities():
 
     # cluster faces and update labels
     descriptors_dlib = [dlib.vector(d) for d in descriptors]
-    clusters = dlib.chinese_whispers_clustering(descriptors_dlib, args.identity_threshold)
+    clusters = dlib.chinese_whispers_clustering(descriptors_dlib, identity_threshold)
     db.update_labels(zip(clusters, face_ids))
     num_clusters = len(set(clusters))
 
@@ -248,7 +254,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(parents=[argparser()])
     parser.add_argument("dir")
     parser.add_argument("db")
-    parser.add_argument("--source", choices=['phone', 'photobooth', 'google', 'interpol'], default='phone')
     args = parser.parse_args()
 
     init(args)
@@ -273,6 +278,7 @@ if __name__ == '__main__':
             data['relpath'] = os.path.relpath(filepath, args.dir)
             data['gps_lat'] = 43.433
             data['gps_lon'] = 23.232
+            data['camera_side'] = 'back'
             data['rotate'] = 0
             data['timestamp'] = "1970-01-18T14:33:35.118Z"
             file_images, file_faces, results = process_file(args.dir, data, args.source)
@@ -284,6 +290,6 @@ if __name__ == '__main__':
     print()
 
     print("Calculating similarities...")
-    compute_similarities()
+    compute_similarities(args.similarity_threshold, args.identity_threshold)
 
     print("Done")

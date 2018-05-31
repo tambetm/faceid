@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS images (
     resized_height INTEGER NOT NULL, 
     frame_num INTEGER,
     num_faces INTEGER NOT NULL,
+    camera_side TEXT,
     exif_data TEXT,
     gps_lat REAL,
     gps_lon REAL,
@@ -55,6 +56,7 @@ CREATE TABLE IF NOT EXISTS faces (
     height REAL NOT NULL,
     landmarks TEXT NOT NULL, 
     descriptor TEXT NOT NULL,
+    confidence REAL NOT NULL,
     cluster_num INTEGER,
     FOREIGN KEY (image_id) REFERENCES images(image_id)
     UNIQUE(image_id, face_num)
@@ -74,15 +76,15 @@ CREATE INDEX IF NOT EXISTS similarities_distance_idx ON similarities(distance);
 def insert_image(row):
     c = conn.cursor()
     c.execute("""INSERT INTO images 
-    (type, source, filepath, image_width, image_height, resized_filepath, resized_width, resized_height, frame_num, exif_data, num_faces, gps_lat, gps_lon, rotate, timestamp) 
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", row)
+    (type, source, filepath, image_width, image_height, resized_filepath, resized_width, resized_height, frame_num, exif_data, num_faces, gps_lat, gps_lon, camera_side, rotate, timestamp) 
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", row)
     return c.lastrowid
 
 def insert_face(row):
     c = conn.cursor()
     c.execute("""INSERT INTO faces 
-    (image_id, face_num, left, top, right, bottom, width, height, landmarks, descriptor) 
-    VALUES (?,?,?,?,?,?,?,?,?,?)""", row)
+    (image_id, face_num, left, top, right, bottom, width, height, confidence, landmarks, descriptor) 
+    VALUES (?,?,?,?,?,?,?,?,?,?,?)""", row)
     return c.lastrowid
 
 def delete_similarities():
@@ -116,18 +118,19 @@ def file_exists(filepath):
     c.execute("SELECT 1 FROM images WHERE filepath = ?", (filepath,))
     return c.fetchone() is not None
 
-def get_clusters(with_gps=False, limit=5):
+def get_clusters(confidence_threshold=0.95, with_gps=False, limit=5):
     conn.row_factory = dict_factory
     c = conn.cursor()
     conn.row_factory = None
     c.execute("""SELECT f.cluster_num, count(1) as count
     FROM faces f 
-    JOIN (SELECT min(image_id), * images GROUP BY filepath)i ON i.image_id = f.image_id
+    JOIN (SELECT min(image_id), * FROM images GROUP BY filepath) i ON i.image_id = f.image_id
     WHERE (NOT ? OR (i.gps_lat IS NOT NULL AND i.gps_lon IS NOT NULL))
-        AND i.source = 'phone'
+        AND i.source = 'phone' AND f.cluster_num IS NOT NULL
     GROUP BY f.cluster_num
+    HAVING avg(f.confidence) > ?
     ORDER BY count(1) DESC
-    LIMIT ?""", (with_gps, limit,))
+    LIMIT ?""", (with_gps, confidence_threshold, limit,))
     return c.fetchall()
 
 def get_cluster_faces(cluster_num, with_gps=False, limit=5):
@@ -136,11 +139,11 @@ def get_cluster_faces(cluster_num, with_gps=False, limit=5):
     conn.row_factory = None
     c.execute("""SELECT f.*, i.*
     FROM faces f 
-    JOIN (SELECT min(image_id), * images GROUP BY filepath) i ON i.image_id = f.image_id
+    JOIN (SELECT min(image_id), * FROM images GROUP BY filepath) i ON i.image_id = f.image_id
     WHERE f.cluster_num = ?
         AND (NOT ? OR (i.gps_lat IS NOT NULL AND i.gps_lon IS NOT NULL))
         AND i.source = 'phone'
-    ORDER BY f.face_id
+    ORDER BY f.confidence DESC
     LIMIT ?""", (cluster_num, with_gps, limit,))
     return c.fetchall()
 
@@ -187,7 +190,7 @@ def get_selfies(limit=5):
     conn.row_factory = dict_factory
     c = conn.cursor()
     conn.row_factory = None
-    c.execute("""SELECT f2.*, i2.*
+    c.execute("""SELECT f2.*, i2.*, s.*
     FROM faces f1 
     JOIN faces f2 ON f1.cluster_num = f2.cluster_num
     JOIN similarities s ON f1.face_id = s.face1_id AND f2.face_id = s.face2_id
@@ -212,3 +215,16 @@ def get_criminals(face_id, limit=5, similarity_threshold=0.35):
     ORDER BY s.distance
     LIMIT ?""", (face_id, similarity_threshold, limit,))
     return c.fetchall()
+'''
+def get_criminals(cluster_num, limit=5):
+    conn.row_factory = dict_factory
+    c = conn.cursor()
+    conn.row_factory = None
+    c.execute("""SELECT f.*, i.*
+    JOIN faces f ON s.face2_id = f.face_id 
+    JOIN images i ON f.image_id = i.image_id 
+    WHERE f.cluster_num = ? AND i.source = 'interpol'
+    ORDER BY s.distance
+    LIMIT ?""", (cluster_num, limit,))
+    return c.fetchall()
+'''
