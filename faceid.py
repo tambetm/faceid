@@ -63,10 +63,10 @@ def resize_image(img, max_size):
     return cv2.resize(img, (0, 0), fx=f, fy=f)
 
 def process_image(data_dir, data, img, image_type, image_source, frame_num=None, exif_data=None):
-    if int(data['rotate']) != 0:
-        assert int(data['rotate']) in [0, 90, 180, 270]
-        img = cv2.rotate(img, int(data['rotate']) // 90 - 1)
-        print("Rotating", data['rotate'])
+    #if int(data['rotate']) != 0:
+    #    assert int(data['rotate']) in [0, 90, 180, 270]
+    #    img = cv2.rotate(img, int(data['rotate']) // 90 - 1)
+    #    print("Rotating", data['rotate'])
 
     image_height, image_width, _ = img.shape
     resizepath, resized_height, resized_width = None, image_height, image_width
@@ -126,7 +126,7 @@ def process_image(data_dir, data, img, image_type, image_source, frame_num=None,
 
         if args.save_faces:
             facepath = os.path.join(data_dir, args.save_faces, "face_%05d.jpg" % face_id)
-            cv2.imwrite(facepath, img[rect.top():rect.bottom(), rect.left():rect.right()])
+            cv2.imwrite(facepath, img[max(rect.top(), 0):rect.bottom(), max(rect.left(), 0):rect.right()])
 
         faceres.append({'face_id': face_id, 'face_num': i, 'left': face_left, 'top': face_top, 'right': face_right, 'bottom': face_bottom, 'width': face_width, 'height': face_height,
             'landmarks': landmarks})

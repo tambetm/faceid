@@ -122,7 +122,7 @@ def get_clusters(with_gps=False, limit=5):
     conn.row_factory = None
     c.execute("""SELECT f.cluster_num, count(1) as count
     FROM faces f 
-    JOIN images i ON i.image_id = f.image_id
+    JOIN (SELECT min(image_id), * images GROUP BY filepath)i ON i.image_id = f.image_id
     WHERE (NOT ? OR (i.gps_lat IS NOT NULL AND i.gps_lon IS NOT NULL))
         AND i.source = 'phone'
     GROUP BY f.cluster_num
@@ -136,7 +136,7 @@ def get_cluster_faces(cluster_num, with_gps=False, limit=5):
     conn.row_factory = None
     c.execute("""SELECT f.*, i.*
     FROM faces f 
-    JOIN images i ON i.image_id = f.image_id
+    JOIN (SELECT min(image_id), * images GROUP BY filepath) i ON i.image_id = f.image_id
     WHERE f.cluster_num = ?
         AND (NOT ? OR (i.gps_lat IS NOT NULL AND i.gps_lon IS NOT NULL))
         AND i.source = 'phone'
