@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS images (
     UNIQUE(filepath, frame_num)
 );
 CREATE INDEX IF NOT EXISTS images_source_type_idx ON images(source, type);
+
 CREATE TABLE IF NOT EXISTS faces (
     face_id INTEGER PRIMARY KEY NOT NULL,
     image_id INTEGER NOT NULL,
@@ -62,6 +63,7 @@ CREATE TABLE IF NOT EXISTS faces (
     UNIQUE(image_id, face_num)
 );
 CREATE INDEX IF NOT EXISTS images_cluster_num_idx ON faces(cluster_num);
+
 CREATE TABLE IF NOT EXISTS similarities (
     face1_id INTEGER NOT NULL,
     face2_id INTEGER NOT NULL,
@@ -71,6 +73,12 @@ CREATE TABLE IF NOT EXISTS similarities (
     UNIQUE(face1_id, face2_id)
 );
 CREATE INDEX IF NOT EXISTS similarities_distance_idx ON similarities(distance);
+
+DROP VIEW IF EXISTS faces_with_pose;
+CREATE VIEW faces_with_pose AS SELECT *, (1 - bottom) / height as pose_coef FROM faces;
+
+DROP VIEW IF EXISTS images_videos_once;
+CREATE VIEW images_videos_once AS SELECT min(image_id) AS image_id, * FROM images GROUP BY filepath;
 """)
 
 def insert_image(row):
@@ -94,21 +102,21 @@ def insert_similarity(row):
     c = conn.cursor()
     c.execute("INSERT INTO similarities (face1_id, face2_id, distance) VALUES (?,?,?)", row)
     return c.lastrowid
-
+'''
 def insert_similarities(rows):
     c = conn.cursor()
     c.executemany("INSERT INTO similarities (face1_id, face2_id, distance) VALUES (?,?,?)", rows)
-
+'''
 def get_all_descriptors():
     c = conn.cursor()
     c.execute("SELECT face_id, descriptor FROM faces")
     return c.fetchall()
-
+'''
 def get_clusterable_descriptors():
     c = conn.cursor()
     c.execute("SELECT face_id, descriptor FROM faces f JOIN images i ON i.image_id = f.image_id WHERE i.source IN ('phone', 'photobooth')")
     return c.fetchall()
-
+'''
 def update_labels(rows):
     c = conn.cursor()
     c.executemany("UPDATE faces SET cluster_num = ? WHERE face_id = ?", rows)
@@ -118,13 +126,13 @@ def file_exists(filepath):
     c.execute("SELECT 1 FROM images WHERE filepath = ?", (filepath,))
     return c.fetchone() is not None
 
-def get_clusters(confidence_threshold=0.95, with_gps=False, limit=5):
+def get_clusters(confidence_threshold=0.95, with_gps=False, limit=5, **kwargs):
     conn.row_factory = dict_factory
     c = conn.cursor()
     conn.row_factory = None
     c.execute("""SELECT f.cluster_num, count(1) as count
     FROM faces f 
-    JOIN (SELECT min(image_id), * FROM images GROUP BY filepath) i ON i.image_id = f.image_id
+    JOIN images_videos_once i ON i.image_id = f.image_id
     WHERE (NOT ? OR (i.gps_lat IS NOT NULL AND i.gps_lon IS NOT NULL))
         AND i.source = 'phone' AND f.cluster_num IS NOT NULL
     GROUP BY f.cluster_num
@@ -133,13 +141,13 @@ def get_clusters(confidence_threshold=0.95, with_gps=False, limit=5):
     LIMIT ?""", (with_gps, confidence_threshold, limit,))
     return c.fetchall()
 
-def get_cluster_faces(cluster_num, with_gps=False, limit=5):
+def get_cluster_faces(cluster_num, with_gps=False, limit=5, **kwargs):
     conn.row_factory = dict_factory
     c = conn.cursor()
     conn.row_factory = None
     c.execute("""SELECT f.*, i.*
-    FROM faces f 
-    JOIN (SELECT min(image_id), * FROM images GROUP BY filepath) i ON i.image_id = f.image_id
+    FROM faces_with_pose f 
+    JOIN images_videos_once i ON i.image_id = f.image_id
     WHERE f.cluster_num = ?
         AND (NOT ? OR (i.gps_lat IS NOT NULL AND i.gps_lon IS NOT NULL))
         AND i.source = 'phone'
@@ -147,36 +155,35 @@ def get_cluster_faces(cluster_num, with_gps=False, limit=5):
     LIMIT ?""", (cluster_num, with_gps, limit,))
     return c.fetchall()
 
-def get_similar_faces(face_id, limit=5, similarity_threshold=0.35):
+def get_similar_faces(face_id, limit=5, similarity_threshold=0.6, **kwargs):
     conn.row_factory = dict_factory
     c = conn.cursor()
     conn.row_factory = None
-    c.execute("""SELECT min(i.image_id) as image_id, f.*, i.*
+    c.execute("""SELECT f.*, i.*
     FROM similarities s 
-    JOIN faces f ON s.face2_id = f.face_id 
-    JOIN images i ON f.image_id = i.image_id 
+    JOIN faces_with_pose f ON s.face2_id = f.face_id 
+    JOIN images_videos_once i ON f.image_id = i.image_id 
     WHERE s.face1_id = ? AND s.distance < ?
-    GROUP BY i.filepath
     ORDER BY s.distance
     LIMIT ?""", (face_id, similarity_threshold, limit,))
     return c.fetchall()
-
+'''
 def get_my_face():
     c = conn.cursor()
     c.execute("""SELECT f.*, i.*
     FROM images i
-    JOIN faces f ON f.image_id = i.image_id 
+    JOIN faces_with_pose f ON f.image_id = i.image_id 
     WHERE i.type = 'image' AND i.source = 'photobooth'""")
     return c.fetchone()
 
-def get_selfies(limit=5, similarity_threshold=0.35):
+def get_selfies(limit=5, similarity_threshold=0.35, **kwargs):
     me = get_my_face()
     assert me is not None
     c = conn.cursor()
     c.execute("""SELECT f2.*, i2.*
     FROM similarities s
     JOIN faces f1 ON s.face1_id = f1.face_id 
-    JOIN faces f2 ON s.face2_id = f2.face_id 
+    JOIN faces_with_pose f2 ON s.face2_id = f2.face_id 
     JOIN images i1 ON f1.image_id = i1.image_id 
     JOIN images i2 ON f2.image_id = i2.image_id 
     WHERE s.distance < ? 
@@ -185,14 +192,14 @@ def get_selfies(limit=5, similarity_threshold=0.35):
     ORDER BY s.distance
     LIMIT ?""", (similarity_threshold, limit,))
     return c.fetchall()
-
-def get_selfies(limit=5):
+'''
+def get_selfies(limit=5, **kwargs):
     conn.row_factory = dict_factory
     c = conn.cursor()
     conn.row_factory = None
     c.execute("""SELECT f2.*, i2.*, s.*
     FROM faces f1 
-    JOIN faces f2 ON f1.cluster_num = f2.cluster_num
+    JOIN faces_with_pose f2 ON f1.cluster_num = f2.cluster_num
     JOIN similarities s ON f1.face_id = s.face1_id AND f2.face_id = s.face2_id
     JOIN images i1 ON f1.image_id = i1.image_id 
     JOIN images i2 ON f2.image_id = i2.image_id 
@@ -202,7 +209,7 @@ def get_selfies(limit=5):
     LIMIT ?""", (limit,))
     return c.fetchall()
 
-def get_criminals(face_id, limit=5, similarity_threshold=0.35):
+def get_criminals(face_id, limit=5, similarity_threshold=0.6, **kwargs):
     conn.row_factory = dict_factory
     c = conn.cursor()
     conn.row_factory = None
@@ -216,7 +223,7 @@ def get_criminals(face_id, limit=5, similarity_threshold=0.35):
     LIMIT ?""", (face_id, similarity_threshold, limit,))
     return c.fetchall()
 '''
-def get_criminals(cluster_num, limit=5):
+def get_criminals(cluster_num, limit=5, **kwargs):
     conn.row_factory = dict_factory
     c = conn.cursor()
     conn.row_factory = None

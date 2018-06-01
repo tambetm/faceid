@@ -64,11 +64,12 @@ def resize_image(img, max_size):
     f = min(fx, fy, 1)
     return cv2.resize(img, (0, 0), fx=f, fy=f)
 
-def process_image(data_dir, data, img, image_type, image_source, frame_num=None, exif_data=None):
-    #if int(data['rotate']) != 0:
-    #    assert int(data['rotate']) in [0, 90, 180, 270]
-    #    img = cv2.rotate(img, int(data['rotate']) // 90 - 1)
-    #    print("Rotating", data['rotate'])
+def process_image(data_dir, relpath, img, image_type, image_source, frame_num=None, exif_data=None, 
+        gps_lat=None, gps_lon=None, camera_side=None, rotate=0, timestamp=None, **kwargs):
+    #if int(rotate) != 0:
+    #    assert int(rotate) in [0, 90, 180, 270]
+    #    img = cv2.rotate(img, int(rotate) // 90 - 1)
+    #    print("Rotating", rotate)
 
     image_height, image_width, _ = img.shape
     resizepath, resized_height, resized_width = None, image_height, image_width
@@ -77,7 +78,7 @@ def process_image(data_dir, data, img, image_type, image_source, frame_num=None,
         img = resize_image(img, args.resize)
         resized_height, resized_width, _ = img.shape
         if args.save_resized:
-            filename = os.path.basename(data['relpath'])
+            filename = os.path.basename(relpath)
             resizepath = os.path.join(args.save_resized, filename)
             basepath, ext = os.path.splitext(resizepath)
             if ext == '' or frame_num is not None:
@@ -89,9 +90,9 @@ def process_image(data_dir, data, img, image_type, image_source, frame_num=None,
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     faces = detector(gray, args.upscale)
 
-    image_id = db.insert_image([image_type, image_source, data['relpath'], image_width, image_height, 
+    image_id = db.insert_image([image_type, image_source, relpath, image_width, image_height, 
         resizepath, resized_width, resized_height, frame_num, exif_data, len(faces),
-        data.get('gps_lat'), data.get('gps_lon'), data.get('camera_side'), data.get('rotate', 0), data.get('timestamp')])
+        gps_lat, gps_lon, camera_side, rotate, timestamp])
 
     poses = dlib.full_object_detections()
     rects = []
@@ -142,11 +143,11 @@ def process_image(data_dir, data, img, image_type, image_source, frame_num=None,
     if args.resize and args.save_resized:
         cv2.imwrite(os.path.join(data_dir, resizepath), img)
 
-    res = {'relpath': data['relpath'], 'frame_num': frame_num, 'resizepath': resizepath, 'image_id': image_id, 'image_type': image_type, 'num_faces': len(faces), 'faces': faceres}
+    res = {'relpath': relpath, 'frame_num': frame_num, 'resizepath': resizepath, 'image_id': image_id, 'image_type': image_type, 'num_faces': len(faces), 'faces': faceres}
     return len(faces), res
 
-def process_image_file(data_dir, data, source):
-    filepath = os.path.join(data_dir, data['relpath'])
+def process_image_file(data_dir, relpath, source, **kwargs):
+    filepath = os.path.join(data_dir, relpath)
     #print('Image:', filepath)
     img = cv2.imread(filepath)
     if img is None:
@@ -154,11 +155,11 @@ def process_image_file(data_dir, data, source):
     with open(filepath, 'rb') as f:
         tags = exifread.process_file(f, details=False)
         tags = {k:str(v) for k, v in tags.items()}
-    num_faces, res = process_image(data_dir, data, img, 'image', source, exif_data=json.dumps(tags))
+    num_faces, res = process_image(data_dir, relpath, img, 'image', source, exif_data=json.dumps(tags), **kwargs)
     return 1, num_faces, [res]
 
-def process_video_file(data_dir, data, source):
-    filepath = os.path.join(data_dir, data['relpath'])
+def process_video_file(data_dir, relpath, source, **kwargs):
+    filepath = os.path.join(data_dir, relpath)
     #print('Video:', filepath)
     cap = cv2.VideoCapture(filepath)
     #print()
@@ -179,7 +180,7 @@ def process_video_file(data_dir, data, source):
             # decode the grabbed frame
             ret, img = cap.retrieve()
             assert ret
-            image_faces, res = process_image(data_dir, data, img, 'video', source, frame_num=frame_num)
+            image_faces, res = process_image(data_dir, relpath, img, 'video', source, frame_num=frame_num, **kwargs)
             num_images += 1
             num_faces += image_faces
             results.append(res)
@@ -187,15 +188,15 @@ def process_video_file(data_dir, data, source):
     cap.release()
     return num_images, num_faces, results
 
-def process_file(data_dir, data, source):
-    if db.file_exists(data['relpath']):
+def process_file(data_dir, relpath, source, **kwargs):
+    if db.file_exists(relpath):
         return 0, 0, []
-    filepath = os.path.join(data_dir, data['relpath'])
+    filepath = os.path.join(data_dir, relpath)
     mime_type = magic.from_file(filepath, mime=True)
     if mime_type.startswith('image/'):
-        return process_image_file(data_dir, data, source)
+        return process_image_file(data_dir, relpath, source, **kwargs)
     elif mime_type.startswith('video/'):
-        return process_video_file(data_dir, data, source)
+        return process_video_file(data_dir, relpath, source, **kwargs)
     else:
         return 0, 0, []
 
@@ -212,7 +213,7 @@ class Timer(object):
     def __str__(self):
         return str(self.t())
 
-def compute_similarities(similarity_threshold=0.6, identity_threshold=0.4):
+def compute_similarities(similarity_threshold=0.6, identity_threshold=0.4, **kwargs):
     t = Timer()
     all_descriptors = db.get_all_descriptors()
     descriptors = [json.loads(f[1]) for f in all_descriptors]
@@ -233,7 +234,7 @@ def compute_similarities(similarity_threshold=0.6, identity_threshold=0.4):
     db.delete_similarities()
     #print("delete similarities:", t)
     num_similarities = 0
-    for i, j in zip(*np.where(dists < similarity_threshold)):
+    for i, j in zip(*np.where(dists < float(similarity_threshold))):
         if i != j:
             db.insert_similarity([face_ids[i], face_ids[j], dists[i, j]])
             num_similarities += 1
@@ -241,7 +242,7 @@ def compute_similarities(similarity_threshold=0.6, identity_threshold=0.4):
 
     # cluster faces and update labels
     descriptors_dlib = [dlib.vector(d) for d in descriptors]
-    clusters = dlib.chinese_whispers_clustering(descriptors_dlib, identity_threshold)
+    clusters = dlib.chinese_whispers_clustering(descriptors_dlib, float(identity_threshold))
     db.update_labels(zip(clusters, face_ids))
     num_clusters = len(set(clusters))
 
@@ -274,14 +275,8 @@ if __name__ == '__main__':
     for dirpath, dirnames, filenames in os.walk(args.dir):
         for filename in filenames:
             filepath = os.path.join(dirpath, filename)
-            data = {}
-            data['relpath'] = os.path.relpath(filepath, args.dir)
-            data['gps_lat'] = 43.433
-            data['gps_lon'] = 23.232
-            data['camera_side'] = 'back'
-            data['rotate'] = 0
-            data['timestamp'] = "1970-01-18T14:33:35.118Z"
-            file_images, file_faces, results = process_file(args.dir, data, args.source)
+            relpath = os.path.relpath(filepath, args.dir)
+            file_images, file_faces, results = process_file(args.dir, relpath, args.source)
             num_files += 1
             num_images += file_images
             num_faces += file_faces

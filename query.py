@@ -24,12 +24,12 @@ args = parser.parse_args()
 db.connect(args.db, args.debug)
 
 if args.command == 'get_clusters':
-    print(json.dumps(db.get_clusters(args.with_gps, args.limit)))
+    print(json.dumps(db.get_clusters(**vars(args))))
 elif args.command == 'get_cluster_faces':
-    print(json.dumps(db.get_cluster_faces(args.cluster_num, args.with_gps, args.limit)))
+    print(json.dumps(db.get_cluster_faces(**vars(args))))
 elif args.command == 'get_similar_faces':
-    print(json.dumps(db.get_similar_faces(args.face_id, args.limit, args.similarity_threshold)))
+    print(json.dumps(db.get_similar_faces(**vars(args))))
 elif args.command == 'get_selfies':
-    print(json.dumps(db.get_selfies(args.limit)))
+    print(json.dumps(db.get_selfies(**vars(args))))
 elif args.command == 'get_criminals':
-    print(json.dumps(db.get_criminals(args.face_id, args.limit, args.similarity_threshold)))
+    print(json.dumps(db.get_criminals(**vars(args))))
