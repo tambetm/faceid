@@ -135,7 +135,7 @@ def process_image(data_dir, relpath, img, image_type, image_source, frame_num=No
             cv2.imwrite(facepath, img[max(rect.top(), 0):rect.bottom(), max(rect.left(), 0):rect.right()])
 
         faceres.append({'face_id': face_id, 'face_num': i, 'left': face_left, 'top': face_top, 'right': face_right, 'bottom': face_bottom, 'width': face_width, 'height': face_height,
-            'confidence': conf, 'landmarks': landmarks})
+            'confidence': conf, 'landmarks': landmarks, 'pose_coef': (1 - face_bottom) / face_height})
 
     db.commit()
 
