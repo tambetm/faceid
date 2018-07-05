@@ -8,6 +8,7 @@ import facedb as db
 import json
 import time
 import os
+import shutil
 import argparse
 
 args = None
@@ -27,6 +28,7 @@ def argparser():
     parser.add_argument("--save_resized", default="resized")
     parser.add_argument("--save_faces", default="faces")
     parser.add_argument("--draw_faces", action="store_true", default=True)
+    parser.add_argument("--save_clusters", default="clusters")
     parser.add_argument("--source", choices=['phone', 'photobooth', 'google', 'interpol'], default='phone')
     parser.add_argument("--identity_threshold", type=float, default=0.4)
     parser.add_argument("--similarity_threshold", type=float, default=0.6)
@@ -213,7 +215,7 @@ class Timer(object):
     def __str__(self):
         return str(self.t())
 
-def compute_similarities(similarity_threshold=0.6, identity_threshold=0.4, **kwargs):
+def compute_similarities(data_dir, similarity_threshold=0.6, identity_threshold=0.4, criminal_fraction=0.1, **kwargs):
     t = Timer()
     all_descriptors = db.get_all_descriptors()
     descriptors = [json.loads(f[1]) for f in all_descriptors]
@@ -246,6 +248,19 @@ def compute_similarities(similarity_threshold=0.6, identity_threshold=0.4, **kwa
     db.update_labels(zip(clusters, face_ids))
     num_clusters = len(set(clusters))
 
+    if args.save_clusters:
+        for cluster_num, face_id in zip(clusters, face_ids):
+            facefile = os.path.realpath(os.path.join(data_dir, args.save_faces, "face_%05d.jpg" % face_id))
+            clusterdir = os.path.join(data_dir, args.save_clusters, str(cluster_num))
+            makedirs(clusterdir)
+            os.symlink(facefile, os.path.join(clusterdir, 'tmpfile'))
+            os.rename(os.path.join(clusterdir, 'tmpfile'), os.path.join(clusterdir, "face_%05d.jpg" % face_id))
+
+    # remove clusters with more than given amount of criminals
+    criminal_clusters = db.get_clusters_with_criminals(criminal_fraction)
+    for cluster in criminal_clusters:
+        db.remove_cluster(cluster['cluster_num'])
+
     db.commit()
     #print("commit:", t)
     #print(", Similarities: %d, Time: %.2fs" % (num_similarities, t.total()))
@@ -260,10 +275,19 @@ if __name__ == '__main__':
     init(args)
 
     if args.save_resized:
-        makedirs(os.path.join(args.dir, args.save_resized))
+        resized_dir = os.path.join(args.dir, args.save_resized)
+        shutil.rmtree(resized_dir)
+        makedirs(resized_dir)
 
     if args.save_faces:
-        makedirs(os.path.join(args.dir, args.save_faces))
+        faces_dir = os.path.join(args.dir, args.save_faces)
+        shutil.rmtree(faces_dir)
+        makedirs(faces_dir)
+
+    if args.save_clusters:
+        clusters_dir = os.path.join(args.dir, args.save_clusters)
+        shutil.rmtree(clusters_dir)
+        makedirs(clusters_dir)
 
     db.connect(args.db)
 

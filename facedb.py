@@ -126,7 +126,7 @@ def file_exists(filepath):
     c.execute("SELECT 1 FROM images WHERE filepath = ?", (filepath,))
     return c.fetchone() is not None
 
-def get_clusters(confidence_threshold=0.95, with_gps=False, limit=5, **kwargs):
+def get_clusters(confidence_threshold=0.8, with_gps=False, limit=5, **kwargs):
     conn.row_factory = dict_factory
     c = conn.cursor()
     conn.row_factory = None
@@ -235,3 +235,21 @@ def get_criminals(cluster_num, limit=5, **kwargs):
     LIMIT ?""", (cluster_num, limit,))
     return c.fetchall()
 '''
+def get_clusters_with_criminals(criminal_fraction=0.1):
+    conn.row_factory = dict_factory
+    c = conn.cursor()
+    conn.row_factory = None
+    c.execute("""SELECT f.cluster_num,
+        count(1) as total_count,
+        count(1) - count(nullif(i.source, 'interpol')) as interpol_count,
+        count(nullif(i.source, 'interpol')) as normal_count,
+        1.0 * (count(1) - count(nullif(i.source, 'interpol'))) / count(1) as interpol_rate
+    FROM faces f
+    JOIN images i ON f.image_id = i.image_id 
+    GROUP BY f.cluster_num
+    HAVING 1.0 * (count(1) - count(nullif(i.source, 'interpol'))) / count(1) > ?
+    """, (criminal_fraction,))
+    return c.fetchall()
+
+def remove_cluster(cluster_num):
+    conn.execute("UPDATE faces SET cluster_num = NULL WHERE cluster_num = ?", (cluster_num,))
